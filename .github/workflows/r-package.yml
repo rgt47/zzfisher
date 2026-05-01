@@ -1,0 +1,70 @@
+# zzcollab r-package.yml v2.4.0
+#
+# R CMD check in a rocker/tidyverse container, triggered on
+# pushes and PRs to main/master.
+#
+name: R Package Check (Container)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: rocker/tidyverse:4.4.2
+    env:
+      ZZCOLLAB_CONTAINER: "true"
+      CI_TOOLS_LIB: "/tmp/ci-tools"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # C libraries required by R packages that link against
+      # libcurl (httr), openssl (git2r), and libxml2 (xml2).
+      - name: Install system dependencies
+        run: |
+          apt-get update && apt-get install -y \
+            jq libcurl4-openssl-dev libssl-dev libxml2-dev cmake
+
+      # Persist the renv global package store across runs.
+      # Key is the renv.lock hash; stale caches serve as
+      # partial restores to avoid full recompilation.
+      - name: Cache renv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/R/renv
+          key: renv-${{ hashFiles('renv.lock') }}
+          restore-keys: |
+            renv-
+
+      # Install renv from CRAN, then restore all packages
+      # pinned in renv.lock into the project-local library.
+      - name: Install renv and restore project packages
+        run: |
+          Rscript -e "\
+            install.packages('renv', repos = 'https://cloud.r-project.org'); \
+            renv::restore(prompt = FALSE)"
+
+      # rcmdcheck lives in a throwaway library so it does not
+      # pollute the renv project library or conflict with
+      # renv-managed package versions.
+      - name: Install CI tools to separate library
+        run: |
+          mkdir -p $CI_TOOLS_LIB
+          Rscript -e "\
+            install.packages(c('rcmdcheck', 'tinytest'),
+              lib = Sys.getenv('CI_TOOLS_LIB'),
+              repos = 'https://cloud.r-project.org')"
+
+      # Full R CMD check (skipping PDF manual build).
+      # This also runs the tinytest suite via the standard
+      # tests/ entry point. Fails the workflow on any ERROR.
+      - name: Run R CMD check
+        run: |
+          Rscript -e "\
+            .libPaths(c(Sys.getenv('CI_TOOLS_LIB'), .libPaths())); \
+            rcmdcheck::rcmdcheck(
+              args = '--no-manual', error_on = 'error')"

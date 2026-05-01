@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "created": "2026-02-12T16:51:02-08:00",
+  "directories": [
+    "R",
+    "man",
+    "tests",
+    "tests/testthat",
+    "vignettes",
+    "analysis",
+    "analysis/data",
+    "analysis/data/raw_data",
+    "analysis/data/derived_data",
+    "analysis/report",
+    "analysis/figures",
+    "analysis/tables",
+    "analysis/scripts",
+    "docs",
+    ".github",
+    ".github/workflows"
+  ],
+  "files": [
+    "NAMESPACE",
+    "LICENSE",
+    "tests/testthat.R",
+    "tests/testthat/test-basic.R",
+    ".gitignore",
+    ".Rbuildignore"
+  ],
+  "template_files": [
+    {
+      "template": "DESCRIPTION",
+      "destination": "DESCRIPTION"
+    },
+    {
+      "template": "data_README.md",
+      "destination": "analysis/data/README.md"
+    },
+    {
+      "template": "Makefile",
+      "destination": "Makefile"
+    },
+    {
+      "template": "workflows/r-package.yml",
+      "destination": ".github/workflows/r-package.yml"
+    }
+  ],
+  "symlinks": [],
+  "docker_image": null
+}

@@ -1,0 +1,15 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^analysis$
+^docs$
+^\.github$
+^renv$
+^renv\.lock$
+^Makefile$
+^Dockerfile$
+^\.dockerignore$
+^zzcollab\.yaml$
+^\.zzcollab$
+^CLAUDE\.md$
+^README\.md$
+^vignettes$
