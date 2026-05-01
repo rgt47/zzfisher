@@ -12,3 +12,4 @@ renv/staging/
 src/*.o
 src/*.so
 src/*.dll
+CLAUDE.md
