@@ -1,4 +1,4 @@
-# zzfisher
+# zzfisher <a href="https://github.com/rgt47/zzfisher"><img src="man/figures/logo.png" align="right" height="138" alt="zzfisher hex sticker" /></a>
 
 Multiple algorithmic implementations of Fisher's exact test for
 r x 2 contingency tables. Includes tree-based (mode-centric
