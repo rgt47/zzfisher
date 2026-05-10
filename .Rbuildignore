@@ -5,6 +5,8 @@
 ^\.github$
 ^renv$
 ^renv\.lock$
+^\.cache$
+^.*/\.cache$
 ^Makefile$
 ^Dockerfile$
 ^\.dockerignore$
