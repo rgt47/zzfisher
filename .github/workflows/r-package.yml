@@ -20,7 +20,7 @@ jobs:
       CI_TOOLS_LIB: "/tmp/ci-tools"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # C libraries required by R packages that link against
       # libcurl (httr), openssl (git2r), and libxml2 (xml2).
@@ -33,7 +33,7 @@ jobs:
       # Key is the renv.lock hash; stale caches serve as
       # partial restores to avoid full recompilation.
       - name: Cache renv packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/R/renv
           key: renv-${{ hashFiles('renv.lock') }}
