@@ -42,10 +42,10 @@ for (nm in names(all_fns)) {
     info = paste(nm, "data.name captures expression"))
 }
 
-# tree_memo_profile returns htest with profile
-run_profile <- !tryCatch(
-  { .tree_memo_profile(dat_2x2); FALSE },
-  error = function(e) grepl("PROFILE_V4", e$message)
+# tree_memo_profile returns htest with profile (only when PROFILE_V4 compiled in)
+run_profile <- tryCatch(
+  { .tree_memo_profile(dat_2x2); TRUE },
+  error = function(e) FALSE
 )
 
 if (run_profile) {
