@@ -2,4 +2,6 @@
 # Overrides user config (~/.zzcollab/config.yaml)
 
 docker:
-  default_profile: "analysis"
+  default_profile: "publishing"
+defaults:
+  profile_name: publishing
