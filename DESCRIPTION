@@ -2,7 +2,7 @@ Package: zzfisher
 Title: Fisher's Exact Test for r x 2 Contingency Tables
 Version: 0.1.0
 Authors@R:
-    person("RG", "Thomas", , "rgthomas@ucsd.edu",
+    person("Ronald G.", "Thomas", , "rgthomas@ucsd.edu",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-1686-4965"))
 Description: Multiple algorithmic implementations of Fisher's exact test

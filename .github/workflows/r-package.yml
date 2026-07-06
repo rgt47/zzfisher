@@ -1,9 +1,14 @@
-# zzcollab r-package.yml v2.4.0
+# zzcollab r-package.yml v0.1.0
 #
-# R CMD check in a rocker/tidyverse container, triggered on
-# pushes and PRs to main/master.
-#
-name: R Package Check (Container)
+# Self-adapting package check. A detect job picks the environment from artifact
+# presence, then the matching check job runs:
+#   flake.nix present -> check-nix: install Nix, run R CMD check in `nix develop`
+#                        (no container).
+#   otherwise         -> check: a generic rocker container; with renv.lock it
+#                        restores the pinned library (L1), else installs from
+#                        DESCRIPTION via pak (L0).
+# The same workflow survives toggling renv or the Nix backend with no edits.
+name: R Package Check
 
 on:
   push:
@@ -12,59 +17,176 @@ on:
     branches: [ main, master ]
 
 jobs:
-  check:
+  detect:
     runs-on: ubuntu-latest
-    container: rocker/tidyverse:4.4.2
+    outputs:
+      nix: ${{ steps.d.outputs.nix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        run: |
+          if [ -f flake.nix ]; then
+            echo "nix=true" >> "$GITHUB_OUTPUT"
+            echo "Backend: Nix flake"
+          else
+            echo "nix=false" >> "$GITHUB_OUTPUT"
+            echo "Backend: container (renv/DESCRIPTION)"
+          fi
+
+  # --- Container check: renv backend or DESCRIPTION install (no flake) ---
+  check:
+    needs: detect
+    if: needs.detect.outputs.nix != 'true'
+    runs-on: ubuntu-latest
+    container: rocker/tidyverse:4.6.0
     env:
       ZZCOLLAB_CONTAINER: "true"
       CI_TOOLS_LIB: "/tmp/ci-tools"
+      RENV_CONFIG_REPOS_OVERRIDE: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+      _R_CHECK_FORCE_SUGGESTS_: "false"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      # C libraries required by R packages that link against
-      # libcurl (httr), openssl (git2r), and libxml2 (xml2).
       - name: Install system dependencies
         run: |
-          apt-get update && apt-get install -y \
-            jq libcurl4-openssl-dev libssl-dev libxml2-dev cmake
+          apt-get update && apt-get install -y jq libcurl4-openssl-dev libssl-dev libxml2-dev cmake
 
-      # Persist the renv global package store across runs.
-      # Key is the renv.lock hash; stale caches serve as
-      # partial restores to avoid full recompilation.
+      - name: Detect package backend
+        id: mode
+        run: |
+          if [ -f renv.lock ]; then
+            echo "renv=true" >> "$GITHUB_OUTPUT"
+            echo "Backend: renv (renv.lock present)"
+          else
+            echo "renv=false" >> "$GITHUB_OUTPUT"
+            echo "Backend: DESCRIPTION (no renv.lock)"
+          fi
+
+      - name: Validate package files exist
+        run: |
+          test -f DESCRIPTION || { echo "Missing DESCRIPTION"; exit 1; }
+          echo "Package files validated"
+
+      # --- renv backend: restore the pinned library ---
       - name: Cache renv packages
-        uses: actions/cache@v5
+        if: steps.mode.outputs.renv == 'true'
+        uses: actions/cache@v4
         with:
           path: ~/.cache/R/renv
           key: renv-${{ hashFiles('renv.lock') }}
           restore-keys: |
             renv-
 
-      # Install renv from CRAN, then restore all packages
-      # pinned in renv.lock into the project-local library.
+      # Restore the pinned library into the fixed CI_TOOLS_LIB (not renv's
+      # default project library), so the exact folder that receives the packages
+      # is one that later steps can put on the path. See the CI library-path
+      # white paper (docs/ci-package-check-library-bug-whitepaper.md): a check
+      # subprocess only sees packages that are on the library path handed to it.
       - name: Install renv and restore project packages
+        if: steps.mode.outputs.renv == 'true'
         run: |
-          Rscript -e "\
-            install.packages('renv', repos = 'https://cloud.r-project.org'); \
-            renv::restore(prompt = FALSE)"
+          mkdir -p "$CI_TOOLS_LIB"
+          Rscript --no-init-file -e "\
+            .libPaths(c(Sys.getenv('CI_TOOLS_LIB'), .libPaths())); \
+            install.packages('renv', lib = Sys.getenv('CI_TOOLS_LIB'), repos = 'https://cloud.r-project.org'); \
+            renv::restore(prompt = FALSE, library = Sys.getenv('CI_TOOLS_LIB'))"
 
-      # rcmdcheck lives in a throwaway library so it does not
-      # pollute the renv project library or conflict with
-      # renv-managed package versions.
+      # --- DESCRIPTION backend: install declared dependencies via pak ---
+      - name: Install dependencies from DESCRIPTION
+        if: steps.mode.outputs.renv == 'false'
+        run: |
+          Rscript -e "install.packages('pak', repos = 'https://cloud.r-project.org')"
+          Rscript -e "pak::local_install_deps(root = '.', dependencies = TRUE)"
+
       - name: Install CI tools to separate library
         run: |
           mkdir -p $CI_TOOLS_LIB
-          Rscript -e "\
-            install.packages(c('rcmdcheck', 'tinytest'),
-              lib = Sys.getenv('CI_TOOLS_LIB'),
-              repos = 'https://cloud.r-project.org')"
+          Rscript -e "install.packages(c('rcmdcheck', 'tinytest'),
+                                       lib = Sys.getenv('CI_TOOLS_LIB'),
+                                       repos = 'https://cloud.r-project.org')"
 
-      # Full R CMD check (skipping PDF manual build).
-      # This also runs the tinytest suite via the standard
-      # tests/ entry point. Fails the workflow on any ERROR.
+      # CI_TOOLS_LIB now holds renv, the restored dependencies, and the check
+      # tools; hand it to the check subprocess via libpath so every Import
+      # resolves (not just those already in the container base image).
       - name: Run R CMD check
         run: |
-          Rscript -e "\
-            .libPaths(c(Sys.getenv('CI_TOOLS_LIB'), .libPaths())); \
-            rcmdcheck::rcmdcheck(
-              args = '--no-manual', error_on = 'error')"
+          Rscript --no-init-file -e "\
+            libs <- c(Sys.getenv('CI_TOOLS_LIB'), .libPaths()); \
+            libs <- libs[!is.na(libs) & nchar(libs) > 0]; \
+            rcmdcheck::rcmdcheck(args = '--no-manual', error_on = 'error', libpath = libs)"
+
+      - name: Run tests
+        continue-on-error: true
+        run: |
+          Rscript -e "
+            .libPaths(c(Sys.getenv('CI_TOOLS_LIB'), .libPaths()))
+            if (dir.exists('inst/tinytest')) {
+              out <- tinytest::run_test_dir('inst/tinytest')
+              if (any(!as.logical(out))) quit(status = 1)
+            } else {
+              message('No inst/tinytest directory found, skipping tests')
+            }
+          "
+
+      - name: Validate project structure
+        run: |
+          echo "✅ DESCRIPTION found"
+          test -d R && echo "✅ R/ directory found" || echo "⚠️  No R/ directory"
+          test -f renv.lock && echo "✅ renv.lock found (renv backend)" \
+            || echo "ℹ️  no renv.lock (DESCRIPTION backend)"
+          echo "✅ Project structure validated"
+
+      # Reproducibility gate: every package the code uses must be declared in
+      # DESCRIPTION and pinned in renv.lock. Fails the build otherwise. Fix
+      # locally with 'make snapshot' (hydrate from the image, snapshot, declare)
+      # and commit the updated renv.lock + DESCRIPTION.
+      - name: Validate dependency manifest (renv.lock + DESCRIPTION)
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Rscript -e "
+            lib <- Sys.getenv('CI_TOOLS_LIB'); .libPaths(c(lib, .libPaths()))
+            if (!requireNamespace('zzrenvcheck', quietly = TRUE)) {
+              if (!requireNamespace('remotes', quietly = TRUE))
+                install.packages('remotes', lib = lib, repos = 'https://cloud.r-project.org')
+              remotes::install_github('rgt47/zzrenvcheck', lib = lib, upgrade = 'never')
+            }
+            res <- zzrenvcheck::check_packages(strict = TRUE)
+            if (identical(res[['status']], 'fail')) {
+              message('FAIL: code uses packages missing from renv.lock or DESCRIPTION.')
+              message(\"Fix locally: 'make snapshot', then commit renv.lock + DESCRIPTION.\")
+              quit(status = 1)
+            }
+          "
+
+  # --- Nix check: the flake pins the environment; run on the runner, no container ---
+  check-nix:
+    needs: detect
+    if: needs.detect.outputs.nix == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Validate package files exist
+        run: test -f DESCRIPTION || { echo "Missing DESCRIPTION"; exit 1; }
+
+      - name: R CMD check (nix develop)
+        run: |
+          nix develop -c sh -c '
+            R CMD build . &&
+            R CMD check --no-manual *.tar.gz'
+
+      - name: Run tests (nix develop)
+        continue-on-error: true
+        run: |
+          nix develop -c Rscript -e '
+            if (dir.exists("inst/tinytest")) {
+              out <- tinytest::run_test_dir("inst/tinytest")
+              if (any(!as.logical(out))) quit(status = 1)
+            } else {
+              message("No inst/tinytest directory found, skipping tests")
+            }'

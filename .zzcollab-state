@@ -1,0 +1,9 @@
+schema=1
+template_version=0.1.0
+r_version=4.6.0
+base_image=rocker/verse:4.6.0
+base_digest=sha256:0b50fdee9288723b5a6802502341f0429ab05edb9db04d57958f49e18d3ea883
+ppm_snapshot=2026-07-05
+install_mode=renv
+archetype=
+generated=2026-07-06T00:28:07Z
