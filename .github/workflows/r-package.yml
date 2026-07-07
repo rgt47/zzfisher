@@ -1,4 +1,4 @@
-# zzcollab r-package.yml v0.2.0
+# zzcollab r-package.yml v0.2.1
 #
 # Self-adapting package check. A detect job picks the environment from artifact
 # presence, then the matching check job runs:
@@ -119,7 +119,7 @@ jobs:
             libs <- c(Sys.getenv('CI_TOOLS_LIB'), .libPaths()); \
             libs <- libs[!is.na(libs) & nchar(libs) > 0]; \
             rcmdcheck::rcmdcheck(args = c('--no-manual', '--no-vignettes'), \
-              build_args = '--no-vignettes', error_on = 'error', libpath = libs)"
+              build_args = '--no-build-vignettes', error_on = 'error', libpath = libs)"
 
       - name: Run tests
         continue-on-error: true
