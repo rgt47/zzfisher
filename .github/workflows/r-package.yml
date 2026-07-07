@@ -42,6 +42,7 @@ jobs:
     env:
       ZZCOLLAB_CONTAINER: "true"
       CI_TOOLS_LIB: "/tmp/ci-tools"
+      R_LIBS_USER: "/tmp/ci-tools"
       RENV_CONFIG_REPOS_OVERRIDE: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
       _R_CHECK_FORCE_SUGGESTS_: "false"
 
