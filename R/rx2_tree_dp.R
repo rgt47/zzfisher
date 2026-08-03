@@ -1,10 +1,21 @@
-#' Tree traversal with constrained suffix DP (pure R)
-#'
-#' @param dat Integer matrix with 2 columns (r x 2 contingency table).
-#' @return An htest object matching \code{fisher.test()} output.
-#' @importFrom stats dhyper
-#' @export
-tree_dp <- function(dat) {
+# tree_v5.R
+# Version 5: Best pure-R tree implementation
+#
+# Base: tree_v4 (memoized find_max/find_min, closure-based scoping)
+# Added from network v5/v6 (backported to tree paradigm):
+#   (1) Precomputed log-factorial table — replaces lgamma(x+1) with
+#       O(1) lookup, used in compute_prob
+#   (2) Row ordering — sort rows by decreasing margin for tighter
+#       early pruning
+#   (3) Constrained suffix_max DP — cmax[k, c1] = max of
+#       prod(choose(r[i], y[i])) for rows k..m subject to
+#       sum(y[i]) = c1. Replaces the unconstrained product
+#       prod(choose(r[i], floor(r[i]/2))) used in v3/v4.
+#
+# Matches tree_v5_opt.cpp algorithmically (minus C++-specific
+# optimizations like fixed arrays and inline functions).
+
+.rx2_tree_dp <- function(dat) {
   pval <- 1
   tol <- 3.45254e-7
   m <- nrow(dat)
@@ -27,15 +38,16 @@ tree_dp <- function(dat) {
   # Suffix sums of row margins (1-indexed: suffix_r[k] = sum of r[k:m])
   suffix_r <- c(rev(cumsum(rev(r))), 0)
 
-  log_const <- sum(lfact[r + 1]) + lfact[cc[1] + 1] +
-    lfact[cc[2] + 1] - lfact[n + 1]
-  p_obs <- exp(log_const - sum(lfact[y_obs + 1]) -
-    sum(lfact[r - y_obs + 1]))
+  log_const <- sum(lfact[r + 1]) + lfact[cc[1] + 1] + lfact[cc[2] + 1] - lfact[n + 1]
+  p_obs <- exp(log_const - sum(lfact[y_obs + 1]) - sum(lfact[r - y_obs + 1]))
 
   # (3) Constrained suffix_max DP
+  # cmax[k, c1] = max of prod(choose(r[i], y[i])) for rows k..m
+  # subject to sum(y[i]) = c1.
+  # Stored as matrix: cmax_mat[k, c1+1] (1-indexed k, 0-indexed c1)
   c0p1 <- cc[1] + 1
   cmax_mat <- matrix(0, nrow = m + 1, ncol = c0p1)
-  cmax_mat[m + 1, 1] <- 1
+  cmax_mat[m + 1, 1] <- 1  # base: empty product = 1, c1 = 0
 
   for (k in m:1) {
     for (c1_idx in seq_len(c0p1)) {
@@ -72,8 +84,7 @@ tree_dp <- function(dat) {
   p_min <- 1
 
   compute_prob <- function(y) {
-    exp(log_const - sum(lfact[y + 1]) -
-      sum(lfact[r - y + 1]))
+    exp(log_const - sum(lfact[y + 1]) - sum(lfact[r - y + 1]))
   }
 
   # --- find_min with memoization ---
@@ -118,8 +129,7 @@ tree_dp <- function(dat) {
       y_save <- y
 
       idx <- which.max(r_avail)
-      y[idx] <- if (descend) min(r_avail[idx], c1)
-        else r_avail[idx] - min(r_avail[idx], n_rem - c1)
+      y[idx] <- if (descend) min(r_avail[idx], c1) else r_avail[idx] - min(r_avail[idx], n_rem - c1)
       n_rem <- n_rem - r_avail[idx]
       r_avail[idx] <- NA
       c1 <- c1 - y[idx]
@@ -127,15 +137,13 @@ tree_dp <- function(dat) {
       joe_min(k + 1, TRUE, r_avail, c1, n_rem, y)
 
       if (descend) {
-        joe_min(k, FALSE, r_avail_save, c1_save,
-          n_rem_save, y_save)
+        joe_min(k, FALSE, r_avail_save, c1_save, n_rem_save, y_save)
       }
     }
 
     joe_min(d, TRUE, r_avail, c1, n_rem, y)
 
-    memo_min[[k_cache]][[cache_key]] <<-
-      list(p = local_min_p, y = local_min_y)
+    memo_min[[k_cache]][[cache_key]] <<- list(p = local_min_p, y = local_min_y)
   }
 
   # --- find_max with memoization ---
@@ -154,8 +162,7 @@ tree_dp <- function(dat) {
     local_max_p <- 0
     local_max_y <- y
 
-    stack <- list(list(
-      k = k_start, c1 = c1, n_rem = n_rem, y = y))
+    stack <- list(list(k = k_start, c1 = c1, n_rem = n_rem, y = y))
 
     while (length(stack) > 0) {
       state <- stack[[length(stack)]]
@@ -184,10 +191,8 @@ tree_dp <- function(dat) {
       if (denom == 0 || c1_rem == 0) {
         y_lo <- y_up <- 0
       } else {
-        y_up <- floor((r[k] + 1) *
-          (c1_rem + d - 1) / denom)
-        y_lo <- ceiling(((r[k] + 1) *
-          (c1_rem + 1) / denom) - 1)
+        y_up <- floor((r[k] + 1) * (c1_rem + d - 1) / denom)
+        y_lo <- ceiling(((r[k] + 1) * (c1_rem + 1) / denom) - 1)
       }
       if (c1_rem == 0) y_lo <- y_up <- 0
 
@@ -209,14 +214,12 @@ tree_dp <- function(dat) {
       }
     }
 
-    memo_max[[k_start]][[cache_key]] <<-
-      list(p = local_max_p, y = local_max_y)
+    memo_max[[k_start]][[cache_key]] <<- list(p = local_max_p, y = local_max_y)
   }
 
   # --- traverse with constrained suffix_max pruning ---
 
-  traverse <- function(k, c1, y, prob_prefix, n_rem,
-                       descend, y_k, dir, mode) {
+  traverse <- function(k, c1, y, prob_prefix, n_rem, descend, y_k, dir, mode) {
     if (k == m) {
       y[m] <- c1
       prob <- compute_prob(y)
@@ -235,8 +238,7 @@ tree_dp <- function(dat) {
 
     if (y_k < y_lo) return()
     if (y_k > y_hi) {
-      traverse(k, c1, y, prob_prefix, n_rem,
-        FALSE, mode - 1, -1, mode)
+      traverse(k, c1, y, prob_prefix, n_rem, FALSE, mode - 1, -1, mode)
       return()
     }
 
@@ -247,8 +249,7 @@ tree_dp <- function(dat) {
     new_n_rem <- suffix_r[k + 1]
 
     step_horizontal <- function() {
-      traverse(k, c1, y, prob_prefix, n_rem,
-        FALSE, y_k + dir, dir, mode)
+      traverse(k, c1, y, prob_prefix, n_rem, FALSE, y_k + dir, dir, mode)
     }
 
     if (m - k > 1) {
@@ -276,16 +277,14 @@ tree_dp <- function(dat) {
       }
     }
 
-    traverse(k + 1, new_c1, y, new_prefix, new_n_rem,
-      TRUE, 0, +1, 0)
+    traverse(k + 1, new_c1, y, new_prefix, new_n_rem, TRUE, 0, +1, 0)
     step_horizontal()
   }
 
   # ----- Main -----
 
-  dname <- deparse(substitute(dat))
   find_max(1, cc[1], n, y_obs)
   traverse(1, cc[1], y_obs, 1, n, TRUE, 0, +1, 0)
 
-  make_htest(pval, dname, "[tree_dp]")
+  pval
 }

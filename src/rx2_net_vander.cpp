@@ -42,6 +42,10 @@ struct FisherStateV5 {
     double threshold;
 };
 
+// Pruned enumeration for rows k..m-1 with c1 remaining.
+// prefix_factor = product of choose(r[i], y[i]) for rows 0..k-1.
+// Returns the sum of suffix factors (rows k..m-1) for all completions
+// whose FULL factor (prefix * suffix) is <= threshold.
 static double enumerate_pruned(int k, int c1, double prefix_factor,
                                FisherStateV5& s) {
 
@@ -59,10 +63,15 @@ static double enumerate_pruned(int k, int c1, double prefix_factor,
     int y_hi = std::min(s.r[k], c1);
     if (y_lo > y_hi) return 0.0;
 
+    // All-below: every factor from rows k..m-1 is at most suffix_max[k].
+    // If prefix * suffix_max[k] <= threshold, every completion qualifies.
+    // Sum of all choose products = choose(suffix_r[k], c1) by Vandermonde.
     if (prefix_factor * s.suffix_max[k] <= s.threshold) {
         return R::choose(s.suffix_r[k], c1);
     }
 
+    // All-above: every factor from rows k..m-1 is at least 1 (choose(r,0)=1).
+    // If prefix * 1 > threshold, no completion qualifies.
     if (prefix_factor > s.threshold) {
         return 0.0;
     }
@@ -73,11 +82,15 @@ static double enumerate_pruned(int k, int c1, double prefix_factor,
         double factor_k = R::choose(s.r[k], y_k);
         double new_prefix = prefix_factor * factor_k;
 
+        // Per-branch all-below: if new_prefix * suffix_max[k+1] <= threshold,
+        // every completion through this y_k qualifies.
         if (new_prefix * s.suffix_max[k + 1] <= s.threshold) {
             sum += factor_k * R::choose(s.suffix_r[k + 1], c1 - y_k);
             continue;
         }
 
+        // Per-branch all-above: if new_prefix > threshold, even the minimum
+        // suffix factor (= 1) makes the full factor exceed threshold.
         if (new_prefix > s.threshold) {
             continue;
         }
@@ -88,8 +101,8 @@ static double enumerate_pruned(int k, int c1, double prefix_factor,
     return sum;
 }
 
-// [[Rcpp::export(name = ".net_vander_cpp")]]
-double net_vander_cpp(IntegerMatrix dat) {
+// [[Rcpp::export(name = ".rx2_net_vander_cpp")]]
+double rx2_net_vander_cpp(IntegerMatrix dat) {
     FisherStateV5 s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);

@@ -36,7 +36,7 @@ struct FisherStateV6 {
     int suffix_r[MAX_ROWS + 1];
     double threshold;
 
-    std::vector<double> cmax;
+    std::vector<double> cmax; // cmax[k * c0p1 + c1]
     int c0p1;
 };
 
@@ -121,8 +121,8 @@ static void precompute_cmax(FisherStateV6& s) {
     }
 }
 
-// [[Rcpp::export(name = ".net_dp_cpp")]]
-double net_dp_cpp(IntegerMatrix dat) {
+// [[Rcpp::export(name = ".rx2_net_dp_cpp")]]
+double rx2_net_dp_cpp(IntegerMatrix dat) {
     FisherStateV6 s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);

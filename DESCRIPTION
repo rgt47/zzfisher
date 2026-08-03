@@ -1,18 +1,21 @@
 Package: zzfisher
 Title: Fisher's Exact Test for r x 2 Contingency Tables
-Version: 0.1.0
+Version: 0.2.0
 Authors@R:
     person("Ronald G.", "Thomas", , "rgthomas@ucsd.edu",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-1686-4965"))
 Description: Multiple algorithmic implementations of Fisher's exact test
-    for r x 2 contingency tables. Includes tree-based (mode-centric
-    traversal with pruning) and network-based (state-space enumeration
-    with Vandermonde bulk-sum) approaches in pure R, C, and C++.
+    for r x 2 contingency tables, with first-generation kernels for
+    r x c tables and r x c x k tables under the no-three-way-interaction
+    model. Includes tree-based (mode-centric traversal with pruning) and
+    network-based (state-space enumeration with Vandermonde bulk-sum)
+    approaches in pure R, C, and C++. User-facing functions dispatch on
+    the shape of the input table.
 License: GPL (>= 3)
 Imports: Rcpp
 LinkingTo: Rcpp
-Suggests: tinytest
+Suggests: microbenchmark, tinytest
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.0.0

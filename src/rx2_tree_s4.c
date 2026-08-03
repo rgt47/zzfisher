@@ -1,4 +1,4 @@
-// tree_memo_s4.c
+// tree_s4.c
 // Tree traversal + S4 mode-path dominance pruning.
 // No memoization: find_max/find_min recompute on every call.
 // Uses R_alloc for interrupt-safe memory management.
@@ -24,6 +24,7 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
+// S4 return code: traverse returns 1 if S4 cascade fires
 #define S4_NONE 0
 #define S4_CASCADE 1
 
@@ -227,6 +228,8 @@ static double dhyper_v5c(int x, int m, int n, int k,
     return exp(lp);
 }
 
+// Returns S4_CASCADE if mode-path S3 fired (caller should
+// skip remaining siblings), S4_NONE otherwise.
 static int traverse_v5c(int k, int c1, int *y,
     double prob_prefix, int n_rem,
     int descend, int y_k, int dir, int mode,
@@ -297,6 +300,7 @@ static int traverse_v5c(int k, int c1, int *y,
                            (y_k == s->mode_path[k]);
 
         if (s->m - k > 2) {
+            // S1: constrained suffix-max bound
             if (new_prefix *
                 s->cmax[(k + 1) * s->c0p1 + new_c1] <=
                 s->p_obs * (1 + s->tol)) {
@@ -311,6 +315,7 @@ static int traverse_v5c(int k, int c1, int *y,
             s->p_min = 1;
             find_min_v5c(new_c1, y, k + 1, s);
 
+            // S2: find_min bulk subtraction
             if (s->p_min > s->p_obs * (1 + s->tol)) {
                 s->pval -= new_prefix;
                 on_mode_path = on_mode_path &&
@@ -319,7 +324,9 @@ static int traverse_v5c(int k, int c1, int *y,
                 continue;
             }
 
+            // S3: find_max exclusion
             if (s->p_max <= s->p_obs * (1 + s->tol)) {
+                // S4: mode-path dominance cascade
                 if (is_mode_node)
                     return S4_CASCADE;
                 on_mode_path = 0;
@@ -381,7 +388,7 @@ static void precompute_cmax(FisherStateV5C *s) {
     }
 }
 
-double tree_memo_s4_c_impl(int *dat, int m) {
+double rx2_tree_s4_c_impl(int *dat, int m) {
     if (m < 2) return 1.0;
     if (m > MAX_ROWS)
         Rf_error("Too many rows (max %d)", MAX_ROWS);

@@ -443,7 +443,7 @@ static int next_power_of_two(int v) {
     return v + 1;
 }
 
-double tree_memo_c_impl(int *dat, int m) {
+double rx2_tree_memo_c_impl(int *dat, int m) {
     if (m < 2) return 1.0;
     if (m > MAX_ROWS)
         Rf_error("Too many rows (max %d)", MAX_ROWS);

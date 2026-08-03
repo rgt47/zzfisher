@@ -10,92 +10,116 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// net_dp_cpp
-double net_dp_cpp(IntegerMatrix dat);
-RcppExport SEXP _zzfisher_net_dp_cpp(SEXP datSEXP) {
+// rx2_net_dp_cpp
+double rx2_net_dp_cpp(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_net_dp_cpp(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(net_dp_cpp(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_net_dp_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// net_vander_cpp
-double net_vander_cpp(IntegerMatrix dat);
-RcppExport SEXP _zzfisher_net_vander_cpp(SEXP datSEXP) {
+// rx2_net_vander_cpp
+double rx2_net_vander_cpp(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_net_vander_cpp(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(net_vander_cpp(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_net_vander_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// tree_dp_cpp
-double tree_dp_cpp(IntegerMatrix dat);
-RcppExport SEXP _zzfisher_tree_dp_cpp(SEXP datSEXP) {
+// rx2_tree_dp_cpp
+double rx2_tree_dp_cpp(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_tree_dp_cpp(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(tree_dp_cpp(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_tree_dp_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// tree_memo_c
-double tree_memo_c(Rcpp::IntegerMatrix dat);
-RcppExport SEXP _zzfisher_tree_memo_c(SEXP datSEXP) {
+// rx2_tree_memo_c
+double rx2_tree_memo_c(Rcpp::IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_tree_memo_c(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(tree_memo_c(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_tree_memo_c(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// tree_memo_cpp
-double tree_memo_cpp(IntegerMatrix dat);
-RcppExport SEXP _zzfisher_tree_memo_cpp(SEXP datSEXP) {
+// rx2_tree_memo_cpp
+double rx2_tree_memo_cpp(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_tree_memo_cpp(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(tree_memo_cpp(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_tree_memo_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// tree_memo_profile
-Rcpp::List tree_memo_profile(IntegerMatrix dat);
-RcppExport SEXP _zzfisher_tree_memo_profile(SEXP datSEXP) {
+// rx2_tree_memo_profile
+Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_tree_memo_profile(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(tree_memo_profile(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_tree_memo_profile(dat));
     return rcpp_result_gen;
 END_RCPP
 }
-// tree_memo_s4_c
-double tree_memo_s4_c(Rcpp::IntegerMatrix dat);
-RcppExport SEXP _zzfisher_tree_memo_s4_c(SEXP datSEXP) {
+// rx2_tree_s4_c
+double rx2_tree_s4_c(Rcpp::IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rx2_tree_s4_c(SEXP datSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type dat(datSEXP);
-    rcpp_result_gen = Rcpp::wrap(tree_memo_s4_c(dat));
+    rcpp_result_gen = Rcpp::wrap(rx2_tree_s4_c(dat));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rxc_tree_memo_cpp
+double rxc_tree_memo_cpp(IntegerMatrix dat);
+RcppExport SEXP _zzfisher_rxc_tree_memo_cpp(SEXP datSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
+    rcpp_result_gen = Rcpp::wrap(rxc_tree_memo_cpp(dat));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rxck_tree_memo_cpp
+double rxck_tree_memo_cpp(IntegerVector dat);
+RcppExport SEXP _zzfisher_rxck_tree_memo_cpp(SEXP datSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type dat(datSEXP);
+    rcpp_result_gen = Rcpp::wrap(rxck_tree_memo_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_zzfisher_net_dp_cpp", (DL_FUNC) &_zzfisher_net_dp_cpp, 1},
-    {"_zzfisher_net_vander_cpp", (DL_FUNC) &_zzfisher_net_vander_cpp, 1},
-    {"_zzfisher_tree_dp_cpp", (DL_FUNC) &_zzfisher_tree_dp_cpp, 1},
-    {"_zzfisher_tree_memo_c", (DL_FUNC) &_zzfisher_tree_memo_c, 1},
-    {"_zzfisher_tree_memo_cpp", (DL_FUNC) &_zzfisher_tree_memo_cpp, 1},
-    {"_zzfisher_tree_memo_profile", (DL_FUNC) &_zzfisher_tree_memo_profile, 1},
-    {"_zzfisher_tree_memo_s4_c", (DL_FUNC) &_zzfisher_tree_memo_s4_c, 1},
+    {"_zzfisher_rx2_net_dp_cpp", (DL_FUNC) &_zzfisher_rx2_net_dp_cpp, 1},
+    {"_zzfisher_rx2_net_vander_cpp", (DL_FUNC) &_zzfisher_rx2_net_vander_cpp, 1},
+    {"_zzfisher_rx2_tree_dp_cpp", (DL_FUNC) &_zzfisher_rx2_tree_dp_cpp, 1},
+    {"_zzfisher_rx2_tree_memo_c", (DL_FUNC) &_zzfisher_rx2_tree_memo_c, 1},
+    {"_zzfisher_rx2_tree_memo_cpp", (DL_FUNC) &_zzfisher_rx2_tree_memo_cpp, 1},
+    {"_zzfisher_rx2_tree_memo_profile", (DL_FUNC) &_zzfisher_rx2_tree_memo_profile, 1},
+    {"_zzfisher_rx2_tree_s4_c", (DL_FUNC) &_zzfisher_rx2_tree_s4_c, 1},
+    {"_zzfisher_rxc_tree_memo_cpp", (DL_FUNC) &_zzfisher_rxc_tree_memo_cpp, 1},
+    {"_zzfisher_rxck_tree_memo_cpp", (DL_FUNC) &_zzfisher_rxck_tree_memo_cpp, 1},
     {NULL, NULL, 0}
 };
 

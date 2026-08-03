@@ -1,9 +1,21 @@
-#' Memoized tree traversal (pure R)
-#'
-#' @param dat Integer matrix with 2 columns (r x 2 contingency table).
-#' @return An htest object matching \code{fisher.test()} output.
-#' @export
-tree_memo <- function(dat) {
+# tree_memo.R
+# Pure R mirror of src/tree_memo.c (optimized version).
+#
+# Maps 1:1 to the C implementation with these optimizations:
+#   - Memoized find_max with incremental log-probability
+#   - Memoized find_min via joe_min recursive search
+#   - dhyper recurrence in traverse (O(1) per sibling)
+#   - S3-before-S2 pruning order in traverse
+#   - Inlined penultimate handler (penult) for bottom two rows
+#   - No suffix_max / S1 bound (removed as dead code)
+#
+# Cache key is (k, c1). Cache stores suffix y-values only;
+# probability is recomputed on hit (prefix differs between calls).
+#
+# Indexing: R 1-based. Row k in R = row k-1 in C.
+# lfact[i] = lgamma(i) = log((i-1)!), so lfact[x+1] = log(x!).
+
+.rx2_tree_memo <- function(dat) {
   pval <- 1
   tol <- 3.45254e-7
   m <- nrow(dat)
@@ -325,8 +337,7 @@ tree_memo <- function(dat) {
     }
   }
 
-  dname <- deparse(substitute(dat))
   find_max(1, cc[1], y_obs)
   traverse(1, cc[1], y_obs, 1, n, TRUE, 0L, 1L, 0L)
-  make_htest(pval, dname, "[tree_memo]")
+  pval
 }

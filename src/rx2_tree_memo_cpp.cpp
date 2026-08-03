@@ -377,8 +377,8 @@ void traverse_v4(int k, int c1, int* y, double prob_prefix, int n_rem,
     traverse_v4(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
 }
 
-// [[Rcpp::export(name = ".tree_memo_cpp")]]
-double tree_memo_cpp(IntegerMatrix dat) {
+// [[Rcpp::export(name = ".rx2_tree_memo_cpp")]]
+double rx2_tree_memo_cpp(IntegerMatrix dat) {
     FisherStateV4 s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
@@ -399,6 +399,7 @@ double tree_memo_cpp(IntegerMatrix dat) {
     bool flipped = s.c[0] > s.c[1];
     if (flipped) std::swap(s.c[0], s.c[1]);
 
+    // Sort rows by increasing margin (smallest first)
     int order[MAX_ROWS];
     for (int i = 0; i < s.m; i++) order[i] = i;
     std::sort(order, order + s.m, [&](int a, int b) {
@@ -420,6 +421,7 @@ double tree_memo_cpp(IntegerMatrix dat) {
     for (int i = s.m - 1; i >= 0; i--)
         s.suffix_max[i] = s.suffix_max[i + 1] * R::choose(s.r[i], s.r[i] / 2);
 
+    // Precompute log-factorial table: lfact[i] = log(i!)
     s.lfact[0] = 0.0;
     for (int i = 1; i <= s.n; i++)
         s.lfact[i] = s.lfact[i - 1] + std::log((double)i);
@@ -446,8 +448,8 @@ double tree_memo_cpp(IntegerMatrix dat) {
     return s.pval;
 }
 
-// [[Rcpp::export(name = ".tree_memo_profile")]]
-Rcpp::List tree_memo_profile(IntegerMatrix dat) {
+// [[Rcpp::export(name = ".rx2_tree_memo_profile")]]
+Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat) {
 #ifndef PROFILE_V4
     Rcpp::stop("PROFILE_V4 not enabled. Uncomment in src/Makevars and rebuild.");
     return Rcpp::List();

@@ -6,10 +6,17 @@
 \alias{zzfisher-package}
 \title{zzfisher: Fisher's Exact Test for r x 2 Contingency Tables}
 \description{
-Multiple algorithmic implementations of Fisher's exact test for r x 2 contingency tables. Includes tree-based (mode-centric traversal with pruning) and network-based (state-space enumeration with Vandermonde bulk-sum) approaches in pure R, C, and C++.
+\if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
+
+Multiple algorithmic implementations of Fisher's exact test for r x 2 contingency tables, with first-generation kernels for r x c tables and r x c x k tables under the no-three-way-interaction model. Includes tree-based (mode-centric traversal with pruning) and network-based (state-space enumeration with Vandermonde bulk-sum) approaches in pure R, C, and C++. User-facing functions dispatch on the shape of the input table.
 }
 \author{
-\strong{Maintainer}: RG Thomas \email{rgthomas@ucsd.edu} (\href{https://orcid.org/0000-0003-1686-4965}{ORCID})
+\strong{Maintainer}: Ronald G. Thomas \email{rgthomas@ucsd.edu} (\href{https://orcid.org/0000-0003-1686-4965}{ORCID})
+
+Authors:
+\itemize{
+  \item Ronald G. Thomas \email{rgthomas@ucsd.edu} (\href{https://orcid.org/0000-0003-1686-4965}{ORCID})
+}
 
 }
 \keyword{internal}

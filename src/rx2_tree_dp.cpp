@@ -45,9 +45,11 @@ struct TreeStateV5 {
     std::unordered_map<int, CacheEntry> memo_max;
     std::unordered_map<int, CacheEntry> memo_min;
 
+    // Precomputed log-factorials: lfact[i] = log(i!)
     double lfact[MAX_N + 1];
     int lfact_size;
 
+    // Constrained suffix max: cmax[k * c0p1 + c1]
     std::vector<double> cmax;
     int c0p1;
 };
@@ -70,6 +72,7 @@ static inline double cpp_choose_lf(int n, int k, const TreeStateV5& s) {
     return std::round(std::exp(s.lfact[n] - s.lfact[k] - s.lfact[n - k]));
 }
 
+// dhyper using log-factorial table
 static inline double dhyper_lf(int x, int m_white, int n_black, int k_draw,
                                const TreeStateV5& s) {
     if (x < 0 || x > k_draw || x > m_white || k_draw - x > n_black) return 0.0;
@@ -78,6 +81,8 @@ static inline double dhyper_lf(int x, int m_white, int n_black, int k_draw,
               - s.lfact[m_white + n_black] + s.lfact[k_draw] + s.lfact[m_white + n_black - k_draw];
     return std::exp(lp);
 }
+
+// --- find_min with memoization ---
 
 static void joe_min_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
                          int* y, TreeStateV5& s, double& local_min_p, int* local_min_y) {
@@ -155,6 +160,8 @@ static void find_min(int c1, int* y, int d, TreeStateV5& s) {
     for (int i = 0; i < s.m; i++) entry.y[i] = local_min_y[i];
     s.memo_min[key] = entry;
 }
+
+// --- find_max with memoization ---
 
 struct FindMaxEntry {
     int k, c1, n_rem;
@@ -239,6 +246,8 @@ static void find_max(int k_start, int c1, int n_rem, int* y, TreeStateV5& s) {
     s.memo_max[key] = entry;
 }
 
+// --- traverse with hypergeometric recurrence ---
+
 static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
                      bool descend, int y_k, int dir, int mode, TreeStateV5& s) {
 
@@ -268,6 +277,7 @@ static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
     double threshold = s.p_obs * (1 + s.tol);
 
     if (s.m - k > 2) {
+        // Constrained suffix_max pruning
         double smax = s.cmax[(k + 1) * s.c0p1 + new_c1];
         if (new_prefix * smax <= threshold) {
             traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
@@ -294,11 +304,130 @@ static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
     traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
 }
 
+// --- Precompute constrained suffix max ---
+// cmax[k][c1] = max of prod(choose(r[i], y[i])) for rows k..m-1
+// subject to sum(y[i]) = c1.
+// Uses the suffix_max formulation: this is the maximum possible factor
+// (product of binomial coefficients) achievable for a given suffix and budget.
+// In the tree paradigm, this bounds the suffix probability via:
+//   max_suffix_prob = D_suffix * cmax[k][c1]
+// where D_suffix accounts for the constant terms.
+//
+// For the tree pruning check (new_prefix * suffix_max <= threshold),
+// we need suffix_max in probability space. The relationship:
+//   max_prob_suffix = exp(log_const_suffix) * (1 / prod(r_i!)) * cmax
+// But compute_prob uses log_const which includes all row factorials.
+// So we precompute cmax as the max of:
+//   prod_{i=k}^{m-1} choose(r[i], y[i]) = prod (r[i]! / (y[i]! (r[i]-y[i])!))
+// and the suffix_max bound for the old pruning check becomes:
+//   new_prefix * suffix_max_prob <= threshold
+// where suffix_max_prob = exp(sum_{i=k+1}^{m-1} lfact[r[i]]) / exp(lfact[suffix_r[k+1]])
+//                       * cmax[k+1][new_c1]    ... this gets complicated.
+//
+// Simpler approach: store cmax as the max probability achievable for the
+// suffix subproblem, computed directly using compute_prob logic.
+// cmax_prob[k][c1] = max over y[k..m-1] summing to c1 of
+//   exp(log_const_suffix - sum(lfact[y_i] + lfact[r_i - y_i]))
+// where log_const_suffix = sum_{i=k}^{m-1} lfact[r[i]] + lfact[c1] + lfact[suffix_r[k]-c1] - lfact[suffix_r[k]]
+//
+// Actually, the simplest correct approach: store the max of
+// prod(1/(y_i! * (r_i-y_i)!)) for the suffix, since
+// prob = exp(log_const) * prod(1/(y_i! * (r_i-y_i)!)) over ALL rows.
+// The prefix contribution is already in prob_prefix (via dhyper product).
+// The suffix_max check in v4 uses:
+//   suffix_max[k] = prod_{i=k}^{m-1} choose(r[i], floor(r[i]/2))
+// and the check is: new_prefix * suffix_max[k+1] <= threshold
+// where new_prefix is a product of dhyper values, and threshold = p_obs*(1+tol).
+//
+// dhyper(y_k, c1, n_rem-c1, r_k) = choose(c1,y_k)*choose(n_rem-c1, r_k-y_k) / choose(n_rem, r_k)
+// So prob_prefix = prod_{i<k} dhyper_i, and the suffix bound must be
+// an upper bound on prod_{i>=k} dhyper_i.
+//
+// The unconstrained suffix_max in v4 uses:
+//   suffix_max[k] = prod_{i=k}^{m-1} choose(r[i], floor(r[i]/2))
+// This doesn't directly bound the dhyper product. Let me re-examine v4's logic...
+//
+// In v4, suffix_max[k] = prod_{i=k}^{m-1} choose(r[i], floor(r[i]/2))
+// and the check is: new_prefix * suffix_max[k+1] <= p_obs * (1+tol)
+// where new_prefix = prob_prefix * dhyper(y_k, ...).
+//
+// This works because the full probability can be factored as:
+//   P = D * prod_{i} choose(r[i], y[i])
+// where D = c1!*c2!/n! (from the v5/v6 derivation).
+// And prob_prefix in the traverse = D * prod_{i<k} choose(r[i], y[i])
+//   ... no wait. prob_prefix = prod_{i<k} dhyper(y_i, ...).
+//
+// The dhyper factorization:
+//   prod_{i=0}^{m-1} dhyper(y_i, c1_i, n_rem_i - c1_i, r[i])
+//   = P(table) (the multivariate hypergeometric, by sequential conditioning)
+//
+// So prob_prefix * prod_{i=k}^{m-1} dhyper(y_i, ...) = P(table).
+// The suffix_max needs to bound max over feasible suffixes of
+// prod_{i>=k+1} dhyper(y_i, c1_i, n_rem_i - c1_i, r[i]).
+//
+// But dhyper depends on c1_i which changes along the path. This is why
+// v4's suffix_max is an approximation — it uses choose(r[i], floor(r[i]/2))
+// as an upper bound on each dhyper factor individually.
+//
+// For the constrained version, we need:
+//   cmax_dhyper[k][c1] = max over y[k..m-1] summing to c1 of
+//     prod_{i=k}^{m-1} dhyper(y_i, c1_i, n_rem_i - c1_i, r[i])
+//
+// This IS the same as max P(suffix) / P(prefix), but it's complex because
+// the dhyper at each step depends on the running c1.
+//
+// Simpler: since P(table) = D * prod choose(r_i, y_i) and
+// prob_prefix (as computed in traverse) = product of dhyper values =
+// P(table with y[0..k-1] fixed, summing over suffixes) ... actually no.
+// prob_prefix = prod dhyper != D * prod choose for prefix only.
+//
+// Let me just verify what v4 actually computes. In traverse_v4:
+//   hp = dhyper_v4(y_k, c1, n_rem - c1, s.r[k])
+//   new_prefix = prob_prefix * hp
+// And the check: new_prefix * suffix_max[k+1] <= p_obs * (1+tol)
+// where suffix_max[k+1] = prod_{i>=k+1} choose(r[i], floor(r[i]/2))
+//
+// For this check to be valid, we need:
+//   new_prefix * suffix_max[k+1] >= P(any table extending current prefix)
+// i.e., suffix_max[k+1] >= P(table) / new_prefix for all feasible suffixes.
+//
+// P(table) / prob_prefix_through_k = prod_{i=k+1}^{m-1} dhyper(y_i, ...)
+//
+// And choose(r_i, floor(r_i/2)) is NOT a valid upper bound on dhyper.
+// dhyper can exceed 1 when parameters are favorable.
+// Actually: dhyper(x, m, n, k) = C(m,x)*C(n,k-x)/C(m+n,k) <= 1 always.
+// And C(m,x)*C(n,k-x)/C(m+n,k) <= C(m, floor(m/2)) * C(n, ...) / C(m+n,k)
+// Hmm, this bound is not simply choose(r_i, floor(r_i/2)).
+//
+// Wait — I think v4's suffix_max is actually bounding a different quantity.
+// Let me just keep the same suffix_max logic as v4 but with the constrained
+// version. The DP computes:
+//   cmax[k][c1] = max over feasible y summing to c1 of
+//     prod_{i=k}^{m-1} choose(r[i], y[i])
+// And the pruning check becomes:
+//   new_prefix * D_ratio * cmax[k+1][new_c1] <= threshold
+// where D_ratio converts between the dhyper-product space and the
+// choose-product space.
+//
+// This is getting too complicated. Let me take a different approach:
+// just precompute the max suffix PROBABILITY directly via DP on
+// compute_prob values, matching exactly what find_max would return.
+
 static void precompute_cmax(TreeStateV5& s) {
     int c0p1 = s.c[0] + 1;
     s.c0p1 = c0p1;
     s.cmax.assign((s.m + 1) * c0p1, 0.0);
 
+    // cmax[k][c1] = max probability achievable by any table where
+    // rows 0..k-1 contribute the "best" prefix and rows k..m-1 have
+    // column-1 values summing to c1.
+    //
+    // But that requires knowing the prefix. Instead, store the max of
+    // the SUFFIX contribution in the same units as suffix_max:
+    // the product of choose(r[i], y[i]) for i=k..m-1.
+    // This is independent of the prefix and directly replaces suffix_max[k].
+
+    // Base: past last row, empty product = 1, only c1=0 is feasible
     s.cmax[s.m * c0p1 + 0] = 1.0;
 
     for (int k = s.m - 1; k >= 0; k--) {
@@ -324,8 +453,8 @@ static void precompute_cmax(TreeStateV5& s) {
     }
 }
 
-// [[Rcpp::export(name = ".tree_dp_cpp")]]
-double tree_dp_cpp(IntegerMatrix dat) {
+// [[Rcpp::export(name = ".rx2_tree_dp_cpp")]]
+double rx2_tree_dp_cpp(IntegerMatrix dat) {
     TreeStateV5 s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
@@ -345,11 +474,13 @@ double tree_dp_cpp(IntegerMatrix dat) {
 
     if (s.n > MAX_N) Rcpp::stop("Total count too large (max %d)", MAX_N);
 
+    // Precompute log-factorial table
     s.lfact_size = s.n + 1;
     s.lfact[0] = 0.0;
     for (int i = 1; i <= s.n; i++)
         s.lfact[i] = s.lfact[i - 1] + std::log((double)i);
 
+    // Sort rows by decreasing margin
     int order[MAX_ROWS];
     for (int i = 0; i < s.m; i++) order[i] = i;
     std::sort(order, order + s.m, [&](int a, int b) {
@@ -381,6 +512,7 @@ double tree_dp_cpp(IntegerMatrix dat) {
     }
     s.p_obs = std::exp(log_p_obs);
 
+    // Precompute constrained suffix max
     precompute_cmax(s);
 
     for (int i = 0; i < s.m; i++) { s.y_max[i] = 0; s.y_min[i] = 0; }
