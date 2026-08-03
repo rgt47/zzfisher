@@ -83,6 +83,7 @@ table1 <- local({
   ms <- 3:7
   res <- lapply(ms, function(m) {
     wins <- 0L
+    n_fisher_error <- 0L
     ratios <- numeric(0)
     for (i in seq_len(60L)) {
       dat <- rand_table(m, function(k) sample(2:30, k, replace = TRUE))
@@ -90,11 +91,15 @@ table1 <- local({
       t_fish <- tryCatch(bench(function() fisher.test(dat)$p.value, 25L)["median"],
                          error = function(e) NA_real_)
       t_tree <- bench(function() tree_memo_c(dat)$p.value, 25L)["median"]
-      if (is.na(t_fish)) next
+      # NA here means fisher.test itself errored (in practice the
+      # FEXACT 'LDSTP too small' default-workspace failure); the tree
+      # kernel was still timed successfully above.
+      if (is.na(t_fish)) { n_fisher_error <- n_fisher_error + 1L; next }
       ratios <- c(ratios, t_fish / t_tree)
       if (t_tree < t_fish) wins <- wins + 1L
     }
     data.frame(m = m, n = length(ratios), faster = wins,
+               fisher_error = n_fisher_error,
                ratio_median = stats::median(ratios),
                ratio_min = min(ratios), ratio_max = max(ratios))
   })
