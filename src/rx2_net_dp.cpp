@@ -19,15 +19,18 @@ using namespace Rcpp;
 
 #define MAX_ROWS 20
 
-static inline double cpp_choose(int n, int k) {
-    if (k < 0 || k > n) return 0.0;
-    if (k == 0 || k == n) return 1.0;
+namespace {
+
+static inline double cpp_choose(int n_arg, int k_arg) {
+    if (k_arg < 0 || k_arg > n_arg) return 0.0;
+    if (k_arg == 0 || k_arg == n_arg) return 1.0;
     return std::round(std::exp(
-        std::lgamma(n + 1) - std::lgamma(k + 1) - std::lgamma(n - k + 1)
+        std::lgamma(n_arg + 1) - std::lgamma(k_arg + 1)
+        - std::lgamma(n_arg - k_arg + 1)
     ));
 }
 
-struct FisherStateV6 {
+struct FisherState {
     int m;
     int n;
     int r[MAX_ROWS];
@@ -40,12 +43,12 @@ struct FisherStateV6 {
     int c0p1;
 };
 
-static inline double get_cmax(int k, int c1, const FisherStateV6& s) {
+static inline double get_cmax(int k, int c1, const FisherState& s) {
     return s.cmax[k * s.c0p1 + c1];
 }
 
 static double enumerate_pruned(int k, int c1, double prefix_factor,
-                               FisherStateV6& s) {
+                               FisherState& s) {
 
     if (k >= s.m) {
         return (prefix_factor <= s.threshold) ? 1.0 : 0.0;
@@ -91,7 +94,7 @@ static double enumerate_pruned(int k, int c1, double prefix_factor,
     return sum;
 }
 
-static void precompute_cmax(FisherStateV6& s) {
+static void precompute_cmax(FisherState& s) {
     int c0p1 = s.c[0] + 1;
     s.c0p1 = c0p1;
     s.cmax.assign((s.m + 1) * c0p1, 0.0);
@@ -121,9 +124,11 @@ static void precompute_cmax(FisherStateV6& s) {
     }
 }
 
+}  // anonymous namespace
+
 // [[Rcpp::export(name = ".rx2_net_dp_cpp")]]
 double rx2_net_dp_cpp(IntegerMatrix dat) {
-    FisherStateV6 s;
+    FisherState s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 

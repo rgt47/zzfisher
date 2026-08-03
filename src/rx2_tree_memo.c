@@ -17,12 +17,12 @@
 
 typedef struct {
     int y[MAX_ROWS];
-} CacheEntryC;
+} CacheEntry;
 
 typedef struct {
     int key;
     int occupied;
-    CacheEntryC entry;
+    CacheEntry entry;
 } HashBucket;
 
 typedef struct {
@@ -43,7 +43,7 @@ typedef struct {
     int y_max[MAX_ROWS];
     HashBucket *memo_max;
     HashBucket *memo_min;
-} FisherStateV4C;
+} FisherState;
 
 static int cache_key(int k, int c1, int mult) {
     return k * mult + c1;
@@ -57,7 +57,7 @@ static int hash_index(int key, int cap) {
     return (int)(h & (cap - 1));
 }
 
-static CacheEntryC *cache_lookup(HashBucket *table,
+static CacheEntry *cache_lookup(HashBucket *table,
                                   int key, int cap) {
     int idx = hash_index(key, cap);
     int i;
@@ -89,8 +89,8 @@ static void cache_insert(HashBucket *table, int key,
     }
 }
 
-static double compute_prob_v4c(const int *y,
-                                const FisherStateV4C *s) {
+static double compute_prob(const int *y,
+                                const FisherState *s) {
     double log_prob = s->log_const;
     int i;
     for (i = 0; i < s->m; i++) {
@@ -100,16 +100,16 @@ static double compute_prob_v4c(const int *y,
     return exp(log_prob);
 }
 
-static void joe_min_v4c_impl(int k, int descend,
+static void joe_min_impl(int k, int descend,
     int *r_avail, int c1, int n_rem, int *y,
-    FisherStateV4C *s,
+    FisherState *s,
     double *local_min_p, int *local_min_y) {
     int i;
     if (k == s->m) {
         for (i = 0; i < s->m; i++) {
             if (r_avail[i] >= 0) y[i] = c1;
         }
-        double prob = compute_prob_v4c(y, s);
+        double prob = compute_prob(y, s);
         if (prob < *local_min_p) {
             *local_min_p = prob;
             memcpy(local_min_y, y, s->m * sizeof(int));
@@ -139,37 +139,37 @@ static void joe_min_v4c_impl(int k, int descend,
     r_avail[idx] = -1;
     c1 -= y[idx];
 
-    joe_min_v4c_impl(k + 1, 1, r_avail, c1, n_rem, y,
+    joe_min_impl(k + 1, 1, r_avail, c1, n_rem, y,
                      s, local_min_p, local_min_y);
 
     if (descend) {
         memcpy(r_avail, r_avail_save,
                s->m * sizeof(int));
         memcpy(y, y_save, s->m * sizeof(int));
-        joe_min_v4c_impl(k, 0, r_avail, c1_save,
+        joe_min_impl(k, 0, r_avail, c1_save,
                          n_rem_save, y, s,
                          local_min_p, local_min_y);
     }
 }
 
-static void find_min_v4c(int c1, int *y, int d,
-                          FisherStateV4C *s) {
-    int key = cache_key(d, c1, s->key_mult);
+static void find_min(int c1, int *y, int k_start,
+                          FisherState *s) {
+    int key = cache_key(k_start, c1, s->key_mult);
     int i;
 
-    CacheEntryC *cached = cache_lookup(s->memo_min, key,
+    CacheEntry *cached = cache_lookup(s->memo_min, key,
                                         s->hash_cap);
     if (cached) {
-        memcpy(y + d, cached->y + d,
-               (s->m - d) * sizeof(int));
-        s->p_min = compute_prob_v4c(y, s);
+        memcpy(y + k_start, cached->y + k_start,
+               (s->m - k_start) * sizeof(int));
+        s->p_min = compute_prob(y, s);
         return;
     }
 
     int r_avail[MAX_ROWS];
     int n_rem = 0;
     for (i = 0; i < s->m; i++) {
-        if (i < d) r_avail[i] = -1;
+        if (i < k_start) r_avail[i] = -1;
         else { r_avail[i] = s->r[i]; n_rem += s->r[i]; }
     }
 
@@ -177,11 +177,11 @@ static void find_min_v4c(int c1, int *y, int d,
     int local_min_y[MAX_ROWS];
     memcpy(local_min_y, y, s->m * sizeof(int));
 
-    joe_min_v4c_impl(d, 1, r_avail, c1, n_rem, y, s,
+    joe_min_impl(k_start, 1, r_avail, c1, n_rem, y, s,
                      &local_min_p, local_min_y);
 
     s->p_min = local_min_p;
-    cache_insert(s->memo_min, key, local_min_y, d, s->m,
+    cache_insert(s->memo_min, key, local_min_y, k_start, s->m,
                  s->hash_cap);
 }
 
@@ -189,18 +189,18 @@ typedef struct {
     int k, c1, n_rem;
     int y[MAX_ROWS];
     double log_p;
-} FindMaxEntryC;
+} FindMaxEntry;
 
-static void find_max_v4c(int k_start, int c1,
-                          int *y, FisherStateV4C *s) {
+static void find_max(int k_start, int c1,
+                          int *y, FisherState *s) {
     int key = cache_key(k_start, c1, s->key_mult);
 
-    CacheEntryC *cached = cache_lookup(s->memo_max, key,
+    CacheEntry *cached = cache_lookup(s->memo_max, key,
                                         s->hash_cap);
     if (cached) {
         memcpy(y + k_start, cached->y + k_start,
                (s->m - k_start) * sizeof(int));
-        s->p_max = compute_prob_v4c(y, s);
+        s->p_max = compute_prob(y, s);
         memcpy(s->y_max, y, s->m * sizeof(int));
         return;
     }
@@ -216,7 +216,7 @@ static void find_max_v4c(int k_start, int c1,
         log_p_prefix -= s->lfact[y[i]]
                       + s->lfact[s->r[i] - y[i]];
 
-    FindMaxEntryC stack[FIND_MAX_STACK];
+    FindMaxEntry stack[FIND_MAX_STACK];
     int sp = 0;
 
     stack[sp].k = k_start;
@@ -228,7 +228,7 @@ static void find_max_v4c(int k_start, int c1,
 
     while (sp > 0) {
         sp--;
-        FindMaxEntryC curr = stack[sp];
+        FindMaxEntry curr = stack[sp];
         int k = curr.k;
         int c1_rem = curr.c1;
         int n_rem_curr = curr.n_rem;
@@ -243,8 +243,8 @@ static void find_max_v4c(int k_start, int c1,
             continue;
         }
 
-        int d = s->m - k;
-        int denom = n_rem_curr + d;
+        int d_rem = s->m - k;
+        int denom = n_rem_curr + d_rem;
         int y_lo, y_up;
 
         if (denom == 0 || c1_rem == 0) {
@@ -252,7 +252,7 @@ static void find_max_v4c(int k_start, int c1,
         } else {
             y_up = (int)floor(
                 (double)(s->r[k] + 1) *
-                (c1_rem + d - 1) / denom);
+                (c1_rem + d_rem - 1) / denom);
             y_lo = (int)ceil(
                 (double)(s->r[k] + 1) *
                 (c1_rem + 1) / denom) - 1;
@@ -268,7 +268,7 @@ static void find_max_v4c(int k_start, int c1,
         for (y_k = y_lo; y_k <= y_up; y_k++) {
             if (sp >= FIND_MAX_STACK)
                 Rf_error("find_max stack overflow "
-                         "(capacity %d)", FIND_MAX_STACK);
+                         "(capacity %d_rem)", FIND_MAX_STACK);
             stack[sp].k = k + 1;
             stack[sp].c1 = c1_rem - y_k;
             stack[sp].n_rem = n_rem_curr - s->r[k];
@@ -289,17 +289,24 @@ static void find_max_v4c(int k_start, int c1,
                  k_start, s->m, s->hash_cap);
 }
 
-static double dhyper_v4c(int x, int m, int n, int k,
+/* Hypergeometric pmf. Parameter names deliberately avoid the CM
+ * symbols m (rows), n (grand total), and k (traversal level):
+ * m_white/n_black/k_draw are the white-ball, black-ball, and draw
+ * counts of the classical urn parameterization. */
+static double dhyper_lf(int x, int m_white, int n_black, int k_draw,
                           const double *lfact) {
-    if (x < 0 || x > k || x > m || k - x > n) return 0.0;
-    double lp = lfact[m] - lfact[x] - lfact[m - x]
-              + lfact[n] - lfact[k - x] - lfact[n - k + x]
-              - lfact[m + n] + lfact[k] + lfact[m + n - k];
+    if (x < 0 || x > k_draw || x > m_white || k_draw - x > n_black)
+        return 0.0;
+    double lp = lfact[m_white] - lfact[x] - lfact[m_white - x]
+              + lfact[n_black] - lfact[k_draw - x]
+              - lfact[n_black - k_draw + x]
+              - lfact[m_white + n_black] + lfact[k_draw]
+              + lfact[m_white + n_black - k_draw];
     return exp(lp);
 }
 
-static void penult_v4c(int c1, int n_rem,
-    double prob_prefix, FisherStateV4C *s) {
+static void penult(int c1, int n_rem,
+    double prob_prefix, FisherState *s) {
     int k = s->m - 2;
     int y_lo = MAX(0, c1 - s->r[s->m - 1]);
     int y_hi = MIN(s->r[k], c1);
@@ -312,7 +319,7 @@ static void penult_v4c(int c1, int n_rem,
     if (mode_k < y_lo) mode_k = y_lo;
     if (mode_k > y_hi) mode_k = y_hi;
 
-    double hp_mode = dhyper_v4c(mode_k, c1, c2,
+    double hp_mode = dhyper_lf(mode_k, c1, c2,
                                  s->r[k], s->lfact);
     double prob = prob_prefix * hp_mode;
     if (prob > thresh)
@@ -349,9 +356,9 @@ static void penult_v4c(int c1, int n_rem,
     }
 }
 
-static void traverse_v4c(int k, int c1, int *y,
+static void traverse(int k, int c1, int *y,
     double prob_prefix, int n_rem, int descend,
-    int y_k, int dir, int mode, FisherStateV4C *s) {
+    int y_k, int dir, int mode, FisherState *s) {
 
     double hp = 0.0;
     int prev_yk = -1;
@@ -361,7 +368,7 @@ static void traverse_v4c(int k, int c1, int *y,
         if (k >= s->m - 1) {
             if (k == s->m - 1) {
                 y[s->m - 1] = c1;
-                double hp_last = dhyper_v4c(
+                double hp_last = dhyper_lf(
                     c1, c1, n_rem - c1,
                     s->r[s->m - 1], s->lfact);
                 double prob = prob_prefix * hp_last;
@@ -389,7 +396,7 @@ static void traverse_v4c(int k, int c1, int *y,
         y[k] = y_k;
         int c2 = n_rem - c1;
         if (need_full) {
-            hp = dhyper_v4c(y_k, c1, c2,
+            hp = dhyper_lf(y_k, c1, c2,
                             s->r[k], s->lfact);
             need_full = 0;
         } else if (dir == +1) {
@@ -411,13 +418,13 @@ static void traverse_v4c(int k, int c1, int *y,
 
         if (s->m - k > 2) {
             s->p_max = 0;
-            find_max_v4c(k + 1, new_c1, y, s);
+            find_max(k + 1, new_c1, y, s);
             if (s->p_max <= s->p_obs * (1 + s->tol)) {
                 y_k += dir; descend = 0;
                 continue;
             }
             s->p_min = 1;
-            find_min_v4c(new_c1, y, k + 1, s);
+            find_min(new_c1, y, k + 1, s);
             if (s->p_min > s->p_obs * (1 + s->tol)) {
                 s->pval -= new_prefix;
                 y_k += dir; descend = 0;
@@ -426,9 +433,9 @@ static void traverse_v4c(int k, int c1, int *y,
         }
 
         if (k == s->m - 3) {
-            penult_v4c(new_c1, new_n_rem, new_prefix, s);
+            penult(new_c1, new_n_rem, new_prefix, s);
         } else {
-            traverse_v4c(k + 1, new_c1, y, new_prefix,
+            traverse(k + 1, new_c1, y, new_prefix,
                          new_n_rem, 1, 0, +1, 0, s);
         }
         y_k += dir; descend = 0;
@@ -448,7 +455,7 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
     if (m > MAX_ROWS)
         Rf_error("Too many rows (max %d)", MAX_ROWS);
 
-    FisherStateV4C s;
+    FisherState s;
     memset(&s, 0, sizeof(s));
     s.m = m;
     s.tol = 3.45254e-7;
@@ -536,8 +543,8 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
     s.p_max = 0;
     s.p_min = 1;
 
-    find_max_v4c(0, s.c[0], y_obs, &s);
-    traverse_v4c(0, s.c[0], y_obs, 1.0, s.n,
+    find_max(0, s.c[0], y_obs, &s);
+    traverse(0, s.c[0], y_obs, 1.0, s.n,
                  1, 0, +1, 0, &s);
 
     return s.pval;

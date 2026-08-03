@@ -51,11 +51,13 @@ static ProfileCounters* g_prof = nullptr;
 #define MAX_ROWS 20
 #define MAX_N 10001  // max total count for log-factorial table
 
+namespace {
+
 struct CacheEntry {
     int y[MAX_ROWS];  // Only indices k to m-1 are valid
 };
 
-struct FisherStateV4 {
+struct FisherState {
     int m;
     int n;
     int r[MAX_ROWS];
@@ -80,7 +82,7 @@ inline int cache_key(int k, int c1) {
     return k * 10001 + c1;
 }
 
-inline double compute_prob_v4(const int* y, const FisherStateV4& s) {
+inline double compute_prob(const int* y, const FisherState& s) {
 #ifdef PROFILE_V4
     if (g_prof) g_prof->calls_compute_prob++;
 #endif
@@ -93,16 +95,16 @@ inline double compute_prob_v4(const int* y, const FisherStateV4& s) {
 }
 
 // Forward declaration
-void joe_min_v4_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
-                     int* y, FisherStateV4& s, double& local_min_p, int* local_min_y);
+void joe_min_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
+                     int* y, FisherState& s, double& local_min_p, int* local_min_y);
 
-void joe_min_v4_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
-                     int* y, FisherStateV4& s, double& local_min_p, int* local_min_y) {
+void joe_min_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
+                     int* y, FisherState& s, double& local_min_p, int* local_min_y) {
     if (k == s.m) {
         for (int i = 0; i < s.m; i++) {
             if (r_avail[i] >= 0) y[i] = c1;
         }
-        double prob = compute_prob_v4(y, s);
+        double prob = compute_prob(y, s);
         if (prob < local_min_p) {
             local_min_p = prob;
             std::memcpy(local_min_y, y, s.m * sizeof(int));
@@ -126,22 +128,22 @@ void joe_min_v4_impl(int k, bool descend, int* r_avail, int c1, int n_rem,
     r_avail[idx] = -1;
     c1 -= y[idx];
 
-    joe_min_v4_impl(k + 1, true, r_avail, c1, n_rem, y, s, local_min_p, local_min_y);
+    joe_min_impl(k + 1, true, r_avail, c1, n_rem, y, s, local_min_p, local_min_y);
 
     if (descend) {
         std::memcpy(r_avail, r_avail_save, s.m * sizeof(int));
         std::memcpy(y, y_save, s.m * sizeof(int));
-        joe_min_v4_impl(k, false, r_avail, c1_save, n_rem_save, y, s, local_min_p, local_min_y);
+        joe_min_impl(k, false, r_avail, c1_save, n_rem_save, y, s, local_min_p, local_min_y);
     }
 }
 
-void find_min_v4(int c1, int* y, int d, FisherStateV4& s) {
+void find_min(int c1, int* y, int k_start, FisherState& s) {
 #ifdef PROFILE_V4
     auto _t0 = g_prof ? std::chrono::high_resolution_clock::now()
                        : std::chrono::high_resolution_clock::time_point();
     if (g_prof) g_prof->calls_find_min++;
 #endif
-    int key = cache_key(d, c1);
+    int key = cache_key(k_start, c1);
 
     auto it = s.memo_min.find(key);
     if (it != s.memo_min.end()) {
@@ -149,8 +151,8 @@ void find_min_v4(int c1, int* y, int d, FisherStateV4& s) {
         if (g_prof) g_prof->cache_hits_min++;
 #endif
         const CacheEntry& entry = it->second;
-        std::memcpy(y + d, entry.y + d, (s.m - d) * sizeof(int));
-        s.p_min = compute_prob_v4(y, s);
+        std::memcpy(y + k_start, entry.y + k_start, (s.m - k_start) * sizeof(int));
+        s.p_min = compute_prob(y, s);
 #ifdef PROFILE_V4
         if (g_prof) {
             auto _t1 = std::chrono::high_resolution_clock::now();
@@ -168,7 +170,7 @@ void find_min_v4(int c1, int* y, int d, FisherStateV4& s) {
     int r_avail[MAX_ROWS];
     int n_rem = 0;
     for (int i = 0; i < s.m; i++) {
-        if (i < d) r_avail[i] = -1;
+        if (i < k_start) r_avail[i] = -1;
         else { r_avail[i] = s.r[i]; n_rem += s.r[i]; }
     }
 
@@ -176,12 +178,12 @@ void find_min_v4(int c1, int* y, int d, FisherStateV4& s) {
     int local_min_y[MAX_ROWS];
     std::memcpy(local_min_y, y, s.m * sizeof(int));
 
-    joe_min_v4_impl(d, true, r_avail, c1, n_rem, y, s, local_min_p, local_min_y);
+    joe_min_impl(k_start, true, r_avail, c1, n_rem, y, s, local_min_p, local_min_y);
 
     s.p_min = local_min_p;
 
     CacheEntry entry;
-    std::memcpy(entry.y + d, local_min_y + d, (s.m - d) * sizeof(int));
+    std::memcpy(entry.y + k_start, local_min_y + k_start, (s.m - k_start) * sizeof(int));
     s.memo_min[key] = entry;
 
 #ifdef PROFILE_V4
@@ -198,7 +200,7 @@ struct FindMaxEntry {
     int y[MAX_ROWS];
 };
 
-void find_max_v4(int k_start, int c1, int* y, FisherStateV4& s) {
+void find_max(int k_start, int c1, int* y, FisherState& s) {
 #ifdef PROFILE_V4
     auto _t0 = g_prof ? std::chrono::high_resolution_clock::now()
                        : std::chrono::high_resolution_clock::time_point();
@@ -214,7 +216,7 @@ void find_max_v4(int k_start, int c1, int* y, FisherStateV4& s) {
         const CacheEntry& entry = it->second;
         std::memcpy(y + k_start, entry.y + k_start,
                     (s.m - k_start) * sizeof(int));
-        s.p_max = compute_prob_v4(y, s);
+        s.p_max = compute_prob(y, s);
         std::memcpy(s.y_max, y, s.m * sizeof(int));
 #ifdef PROFILE_V4
         if (g_prof) {
@@ -252,7 +254,7 @@ void find_max_v4(int k_start, int c1, int* y, FisherStateV4& s) {
         int n_rem_curr = curr.n_rem;
 
         if (k >= s.m) {
-            double prob = compute_prob_v4(curr.y, s);
+            double prob = compute_prob(curr.y, s);
             if (prob > local_max_p) {
                 local_max_p = prob;
                 std::memcpy(local_max_y, curr.y, s.m * sizeof(int));
@@ -260,14 +262,14 @@ void find_max_v4(int k_start, int c1, int* y, FisherStateV4& s) {
             continue;
         }
 
-        int d = s.m - k;
-        int denom = n_rem_curr + d;
+        int d_rem = s.m - k;
+        int denom = n_rem_curr + d_rem;
         int y_lo, y_up;
 
         if (denom == 0 || c1_rem == 0) {
             y_lo = y_up = 0;
         } else {
-            y_up = (int)std::floor((double)(s.r[k] + 1) * (c1_rem + d - 1) / denom);
+            y_up = (int)std::floor((double)(s.r[k] + 1) * (c1_rem + d_rem - 1) / denom);
             y_lo = (int)std::ceil((double)(s.r[k] + 1) * (c1_rem + 1) / denom) - 1;
         }
 
@@ -304,23 +306,31 @@ void find_max_v4(int k_start, int c1, int* y, FisherStateV4& s) {
 #endif
 }
 
-inline double dhyper_v4(int x, int m, int n, int k, const double* lfact) {
-    if (x < 0 || x > k || x > m || k - x > n) return 0.0;
-    double lp = lfact[m] - lfact[x] - lfact[m - x]
-              + lfact[n] - lfact[k - x] - lfact[n - k + x]
-              - lfact[m + n] + lfact[k] + lfact[m + n - k];
+// Hypergeometric pmf. Parameter names deliberately avoid the CM
+// symbols m (rows), n (grand total), and k (traversal level):
+// m_white/n_black/k_draw are the white-ball, black-ball, and draw
+// counts of the classical urn parameterization.
+inline double dhyper_lf(int x, int m_white, int n_black, int k_draw,
+                        const double* lfact) {
+    if (x < 0 || x > k_draw || x > m_white || k_draw - x > n_black)
+        return 0.0;
+    double lp = lfact[m_white] - lfact[x] - lfact[m_white - x]
+              + lfact[n_black] - lfact[k_draw - x]
+              - lfact[n_black - k_draw + x]
+              - lfact[m_white + n_black] + lfact[k_draw]
+              + lfact[m_white + n_black - k_draw];
     return std::exp(lp);
 }
 
-void traverse_v4(int k, int c1, int* y, double prob_prefix, int n_rem,
-                 bool descend, int y_k, int dir, int mode, FisherStateV4& s) {
+void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
+                 bool descend, int y_k, int dir, int mode, FisherState& s) {
 #ifdef PROFILE_V4
     if (g_prof) g_prof->calls_traverse++;
 #endif
 
     if (k == s.m - 1) {
         y[s.m - 1] = c1;
-        double hp = dhyper_v4(c1, c1, n_rem - c1, s.r[s.m - 1], s.lfact);
+        double hp = dhyper_lf(c1, c1, n_rem - c1, s.r[s.m - 1], s.lfact);
         double prob = prob_prefix * hp;
         if (prob > s.p_obs * (1 + s.tol)) s.pval -= prob;
         return;
@@ -332,12 +342,12 @@ void traverse_v4(int k, int c1, int* y, double prob_prefix, int n_rem,
     if (descend) { mode = s.y_max[k]; y_k = mode; }
     if (y_k < y_lo) return;
     if (y_k > y_hi) {
-        traverse_v4(k, c1, y, prob_prefix, n_rem, false, mode - 1, -1, mode, s);
+        traverse(k, c1, y, prob_prefix, n_rem, false, mode - 1, -1, mode, s);
         return;
     }
 
     y[k] = y_k;
-    double hp = dhyper_v4(y_k, c1, n_rem - c1, s.r[k], s.lfact);
+    double hp = dhyper_lf(y_k, c1, n_rem - c1, s.r[k], s.lfact);
     double new_prefix = prob_prefix * hp;
     int new_c1 = c1 - y_k;
     int new_n_rem = s.suffix_r[k + 1];
@@ -347,39 +357,41 @@ void traverse_v4(int k, int c1, int* y, double prob_prefix, int n_rem,
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_suffix++;
 #endif
-            traverse_v4(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
+            traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
 
         s.p_max = 0;
-        find_max_v4(k + 1, new_c1, y, s);
+        find_max(k + 1, new_c1, y, s);
         s.p_min = 1;
-        find_min_v4(new_c1, y, k + 1, s);
+        find_min(new_c1, y, k + 1, s);
 
         if (s.p_min > s.p_obs * (1 + s.tol)) {
             s.pval -= new_prefix;
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_min++;
 #endif
-            traverse_v4(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
+            traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
         if (s.p_max <= s.p_obs * (1 + s.tol)) {
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_max++;
 #endif
-            traverse_v4(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
+            traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
     }
 
-    traverse_v4(k + 1, new_c1, y, new_prefix, new_n_rem, true, 0, +1, 0, s);
-    traverse_v4(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
+    traverse(k + 1, new_c1, y, new_prefix, new_n_rem, true, 0, +1, 0, s);
+    traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
 }
+
+}  // anonymous namespace
 
 // [[Rcpp::export(name = ".rx2_tree_memo_cpp")]]
 double rx2_tree_memo_cpp(IntegerMatrix dat) {
-    FisherStateV4 s;
+    FisherState s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 
@@ -442,8 +454,8 @@ double rx2_tree_memo_cpp(IntegerMatrix dat) {
     s.p_max = 0;
     s.p_min = 1;
 
-    find_max_v4(0, s.c[0], y_obs, s);
-    traverse_v4(0, s.c[0], y_obs, 1.0, s.n, true, 0, +1, 0, s);
+    find_max(0, s.c[0], y_obs, s);
+    traverse(0, s.c[0], y_obs, 1.0, s.n, true, 0, +1, 0, s);
 
     return s.pval;
 }
@@ -459,7 +471,7 @@ Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat) {
 
     auto wall_start = std::chrono::high_resolution_clock::now();
 
-    FisherStateV4 s;
+    FisherState s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 
@@ -522,8 +534,8 @@ Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat) {
 
     auto traverse_start = std::chrono::high_resolution_clock::now();
 
-    find_max_v4(0, s.c[0], y_obs, s);
-    traverse_v4(0, s.c[0], y_obs, 1.0, s.n, true, 0, +1, 0, s);
+    find_max(0, s.c[0], y_obs, s);
+    traverse(0, s.c[0], y_obs, 1.0, s.n, true, 0, +1, 0, s);
 
     auto traverse_end = std::chrono::high_resolution_clock::now();
     prof.time_traverse = std::chrono::duration<double>(

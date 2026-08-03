@@ -89,8 +89,8 @@
 
   # --- find_min with memoization ---
 
-  find_min <- function(c1, y, d) {
-    k_cache <- d + 1
+  find_min <- function(c1, y, k_start) {
+    k_cache <- k_start + 1
     cache_key <- c1 + 1
 
     if (!is.null(memo_min[[k_cache]][[cache_key]])) {
@@ -102,8 +102,8 @@
     }
 
     r_avail <- r
-    if (d > 0) r_avail[1:d] <- NA
-    n_rem <- sum(r[(d + 1):m])
+    if (k_start > 0) r_avail[1:k_start] <- NA
+    n_rem <- sum(r[(k_start + 1):m])
 
     local_min_p <- Inf
     local_min_y <- y
@@ -141,7 +141,7 @@
       }
     }
 
-    joe_min(d, TRUE, r_avail, c1, n_rem, y)
+    joe_min(k_start, TRUE, r_avail, c1, n_rem, y)
 
     memo_min[[k_cache]][[cache_key]] <<- list(p = local_min_p, y = local_min_y)
   }
@@ -186,12 +186,12 @@
         next
       }
 
-      d <- m - (k - 1)
-      denom <- n_rem_curr + d
+      d_rem <- m - (k - 1)
+      denom <- n_rem_curr + d_rem
       if (denom == 0 || c1_rem == 0) {
         y_lo <- y_up <- 0
       } else {
-        y_up <- floor((r[k] + 1) * (c1_rem + d - 1) / denom)
+        y_up <- floor((r[k] + 1) * (c1_rem + d_rem - 1) / denom)
         y_lo <- ceiling(((r[k] + 1) * (c1_rem + 1) / denom) - 1)
       }
       if (c1_rem == 0) y_lo <- y_up <- 0

@@ -51,30 +51,30 @@
       sum(lfact[y + 1]) - sum(lfact[r - y + 1]))
   }
 
-  dhyper_lfact <- function(x, m_par, n_par, k_par) {
-    if (x < 0 || x > k_par || x > m_par ||
-        k_par - x > n_par) return(0)
-    lp <- lfact[m_par + 1] - lfact[x + 1] -
-      lfact[m_par - x + 1] +
-      lfact[n_par + 1] - lfact[k_par - x + 1] -
-      lfact[n_par - k_par + x + 1] -
-      lfact[m_par + n_par + 1] + lfact[k_par + 1] +
-      lfact[m_par + n_par - k_par + 1]
+  dhyper_lfact <- function(x, m_white, n_black, k_draw) {
+    if (x < 0 || x > k_draw || x > m_white ||
+        k_draw - x > n_black) return(0)
+    lp <- lfact[m_white + 1] - lfact[x + 1] -
+      lfact[m_white - x + 1] +
+      lfact[n_black + 1] - lfact[k_draw - x + 1] -
+      lfact[n_black - k_draw + x + 1] -
+      lfact[m_white + n_black + 1] + lfact[k_draw + 1] +
+      lfact[m_white + n_black - k_draw + 1]
     exp(lp)
   }
 
-  find_min <- function(c1, y, d) {
-    key <- paste(d, c1)
+  find_min <- function(c1, y, k_start) {
+    key <- paste(k_start, c1)
     if (exists(key, envir = memo_min)) {
       cached_suffix <- get(key, envir = memo_min)
-      y[d:m] <- cached_suffix
+      y[k_start:m] <- cached_suffix
       p_min <<- compute_prob(y)
       return()
     }
 
     r_avail <- r
-    if (d > 1) r_avail[1:(d - 1)] <- NA
-    n_rem <- suffix_r[d]
+    if (k_start > 1) r_avail[1:(k_start - 1)] <- NA
+    n_rem <- suffix_r[k_start]
 
     local_min_p <- Inf
     local_min_y <- y
@@ -105,9 +105,9 @@
         joe_min(k, FALSE, r_save, c1_save, n_save, y_save)
     }
 
-    joe_min(d, TRUE, r_avail, c1, n_rem, y)
+    joe_min(k_start, TRUE, r_avail, c1, n_rem, y)
     p_min <<- local_min_p
-    assign(key, local_min_y[d:m], envir = memo_min)
+    assign(key, local_min_y[k_start:m], envir = memo_min)
   }
 
   find_max <- function(k_start, c1, y) {
@@ -153,13 +153,13 @@
         next
       }
 
-      d <- m - k + 1
-      denom <- nr + d
+      d_rem <- m - k + 1
+      denom <- nr + d_rem
       if (denom == 0 || c1r == 0) {
         y_lo <- 0L
         y_up <- 0L
       } else {
-        y_up <- floor((r[k] + 1) * (c1r + d - 1) / denom)
+        y_up <- floor((r[k] + 1) * (c1r + d_rem - 1) / denom)
         y_lo <- ceiling((r[k] + 1) * (c1r + 1) /
           denom) - 1
       }

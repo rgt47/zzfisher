@@ -10,7 +10,8 @@
 //         bulk-sum via Vandermonde identity instead of enumerating
 //       - All-above: if min possible factor > threshold, skip branch
 //
-// The threshold is t = p_obs*(1+tol)/D where D = c1!*c2!/n!.
+// The threshold is tau = p_obs*(1+tol)/D where D = c1!*c2!/n!.
+// (tau, not t: the manuscripts reserve t for the rxc/rxck path index.)
 // P(table) = D * prod(choose(r_i, y_i)), so factor = prod(choose(r_i, y_i)).
 //
 // prefix_factor tracks the accumulated product of choose values for rows
@@ -31,7 +32,9 @@ using namespace Rcpp;
 
 #define MAX_ROWS 20
 
-struct FisherStateV5 {
+namespace {
+
+struct FisherState {
     int m;
     int n;
     int r[MAX_ROWS];
@@ -47,7 +50,7 @@ struct FisherStateV5 {
 // Returns the sum of suffix factors (rows k..m-1) for all completions
 // whose FULL factor (prefix * suffix) is <= threshold.
 static double enumerate_pruned(int k, int c1, double prefix_factor,
-                               FisherStateV5& s) {
+                               FisherState& s) {
 
     if (k >= s.m) {
         return (prefix_factor <= s.threshold) ? 1.0 : 0.0;
@@ -101,9 +104,11 @@ static double enumerate_pruned(int k, int c1, double prefix_factor,
     return sum;
 }
 
+}  // anonymous namespace
+
 // [[Rcpp::export(name = ".rx2_net_vander_cpp")]]
 double rx2_net_vander_cpp(IntegerMatrix dat) {
-    FisherStateV5 s;
+    FisherState s;
     s.m = dat.nrow();
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 

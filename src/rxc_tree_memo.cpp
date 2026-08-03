@@ -1,14 +1,19 @@
 // rxc_tree_memo.cpp
-// First-generation r x c Fisher's exact test kernel.
+// First-generation m x c Fisher's exact test kernel.
+//
+// Notation follows the Concrete Mathematics convention of the
+// manuscripts: m rows, c columns, n grand total, row margins r_i,
+// column margins c_j, cell coordinates (i, j), path index t.
 //
 // Algorithm (from Rxc1 paper pp.21-28, network/path reduction):
-//   - Linearize the (R-1)(C-1) free cells along the path
-//     (1,1) -> (2,1) -> ... -> (R-1,1) -> (1,2) -> ... -> (R-1,C-1)
-//     using k = r + (c-1)(R-1) (1-indexed in the paper; 0-indexed here).
+//   - Linearize the (m-1)(c-1) free cells along the path
+//     (1,1) -> (2,1) -> ... -> (m-1,1) -> (1,2) -> ... -> (m-1,c-1)
+//     using t = i + (j-1)(m-1) (1-indexed in the paper; 0-indexed
+//     here).
 //   - Recursively place each free cell over its feasible range
-//     [max(0, R_resid - sum_{c'>c} C_resid[c']), min(R_resid, C_resid)].
-//   - When the path completes, fill the last column (cells (r,C-1) =
-//     remaining row residual) and last row (cells (R-1,c) = remaining
+//     [max(0, rresid - sum_{j'>j} cresid[j']), min(rresid, cresid)].
+//   - When the path completes, fill the last column (cells (i,c-1) =
+//     remaining row residual) and last row (cells (m-1,j) = remaining
 //     column residual). This determines the table.
 //   - Test statistic T(Y) = 1/Pr(Y); start antipvalue at 1 and subtract
 //     Pr(Y) for tables strictly more probable than observed
@@ -27,133 +32,134 @@
 
 using namespace Rcpp;
 
-static const double RXC_TOL = 3.45254e-7;
-
 namespace {
 
-struct RxC {
-  int R, C, N;
-  std::vector<int> Rm, Cm;     // observed row/column margins
-  std::vector<int> Rr, Cr;     // residual row/column margins
-  std::vector<int> y;          // current table, R*C ints, row-major
-  double cns;                  // log(prod R_i! prod C_j! / N!)
-  double pobs;
-  double pval;                 // antipvalue, starts at 1
+const double RXC_TOL = 3.45254e-7;
+
+struct RxcState {
+  int m, c, n;                       // rows, columns, grand total
+  std::vector<int> rmarg, cmarg;     // observed row/column margins
+  std::vector<int> rresid, cresid;   // residual row/column margins
+  std::vector<int> y;                // current table, m*c ints, row-major
+  double log_const;                  // log(prod r_i! prod c_j! / n!)
+  double p_obs;
+  double pval;                       // antipvalue, starts at 1
 };
 
-inline int idx(const RxC& s, int r, int c) { return r * s.C + c; }
+inline int yidx(const RxcState& s, int i, int j) { return i * s.c + j; }
 
-inline double table_p(const RxC& s) {
+inline double table_p(const RxcState& s) {
   double sum = 0.0;
   for (int v : s.y) sum += std::lgamma(v + 1);
-  return std::exp(s.cns - sum);
+  return std::exp(s.log_const - sum);
 }
 
 // After path traversal completes, fill last column and last row from
 // margin residuals. Returns false if any computed cell is negative.
 //
-// Implementation note: this function does NOT mutate s.Cr or s.Rr
-// (only s.y). An earlier version decremented s.Cr[C-1] in place; on
-// the infeasibility-return code path that mutation was not reverted
-// and corrupted subsequent iterations. The current form computes the
-// last (R-1, C-1) cell from a local sum and reads the last-row cells
-// directly from s.Cr[c], which the caller has not yet mutated.
-bool finish_table(RxC& s) {
-  const int Rm1 = s.R - 1;
-  const int Cm1 = s.C - 1;
-  // Last column for rows 0..R-2: cell value = remaining row residual.
+// Implementation note: this function does NOT mutate s.cresid or
+// s.rresid (only s.y). An earlier version decremented s.cresid[c-1]
+// in place; on the infeasibility-return code path that mutation was
+// not reverted and corrupted subsequent iterations. The current form
+// computes the last (m-1, c-1) cell from a local sum and reads the
+// last-row cells directly from s.cresid[j], which the caller has not
+// yet mutated.
+bool finish_table(RxcState& s) {
+  const int mm1 = s.m - 1;
+  const int cm1 = s.c - 1;
+  // Last column for rows 0..m-2: cell value = remaining row residual.
   int sum_last_col = 0;
-  for (int r = 0; r < Rm1; ++r) {
-    int v = s.Rr[r];
+  for (int i = 0; i < mm1; ++i) {
+    int v = s.rresid[i];
     if (v < 0) return false;
-    s.y[idx(s, r, Cm1)] = v;
+    s.y[yidx(s, i, cm1)] = v;
     sum_last_col += v;
   }
-  // (R-1, C-1) cell from last-column total minus what was just placed.
-  int v_corner = s.Cm[Cm1] - sum_last_col;
+  // (m-1, c-1) cell from last-column total minus what was just placed.
+  int v_corner = s.cmarg[cm1] - sum_last_col;
   if (v_corner < 0) return false;
-  s.y[idx(s, Rm1, Cm1)] = v_corner;
-  // Last row for cols 0..C-2: cell value = remaining column residual
-  // (s.Cr[c] is the residual after path traversal in cols < C-1).
-  for (int c = 0; c < Cm1; ++c) {
-    int v = s.Cr[c];
+  s.y[yidx(s, mm1, cm1)] = v_corner;
+  // Last row for cols 0..c-2: cell value = remaining column residual
+  // (s.cresid[j] is the residual after path traversal in cols < c-1).
+  for (int j = 0; j < cm1; ++j) {
+    int v = s.cresid[j];
     if (v < 0) return false;
-    s.y[idx(s, Rm1, c)] = v;
+    s.y[yidx(s, mm1, j)] = v;
   }
   return true;
 }
 
-void traverse(int k, int kmax, RxC& s) {
-  if (k > kmax) {
+void traverse(int t, int tmax, RxcState& s) {
+  if (t > tmax) {
     if (!finish_table(s)) return;
     double p = table_p(s);
-    if (p - s.pobs > s.pobs * RXC_TOL) s.pval -= p;
+    if (p - s.p_obs > s.p_obs * RXC_TOL) s.pval -= p;
     return;
   }
-  // Path step k (1-indexed) -> cell (r, c) zero-indexed.
-  const int kk = k - 1;
-  const int r = kk % (s.R - 1);
-  const int c = kk / (s.R - 1);
+  // Path step t (1-indexed) -> cell (i, j) zero-indexed.
+  const int tt = t - 1;
+  const int i = tt % (s.m - 1);
+  const int j = tt / (s.m - 1);
 
-  // Lower bound: row r residual must be absorbable by remaining-cols
-  // capacity (cols c+1..C-1), so x >= R_resid - sum of those C_resid.
+  // Lower bound: row i residual must be absorbable by remaining-cols
+  // capacity (cols j+1..c-1), so x >= rresid - sum of those cresid.
   int sum_rest_cols = 0;
-  for (int cc = c + 1; cc < s.C; ++cc) sum_rest_cols += s.Cr[cc];
-  const int x_lo = std::max(0, s.Rr[r] - sum_rest_cols);
-  const int x_up = std::min(s.Rr[r], s.Cr[c]);
+  for (int jj = j + 1; jj < s.c; ++jj) sum_rest_cols += s.cresid[jj];
+  const int x_lo = std::max(0, s.rresid[i] - sum_rest_cols);
+  const int x_up = std::min(s.rresid[i], s.cresid[j]);
 
   for (int x = x_lo; x <= x_up; ++x) {
-    s.y[idx(s, r, c)] = x;
-    s.Rr[r] -= x;
-    s.Cr[c] -= x;
-    traverse(k + 1, kmax, s);
-    s.Rr[r] += x;
-    s.Cr[c] += x;
+    s.y[yidx(s, i, j)] = x;
+    s.rresid[i] -= x;
+    s.cresid[j] -= x;
+    traverse(t + 1, tmax, s);
+    s.rresid[i] += x;
+    s.cresid[j] += x;
   }
-  s.y[idx(s, r, c)] = 0;
+  s.y[yidx(s, i, j)] = 0;
 }
 
-} // namespace
+}  // anonymous namespace
 
 // [[Rcpp::export(name = ".rxc_tree_memo_cpp")]]
 double rxc_tree_memo_cpp(IntegerMatrix dat) {
-  RxC s;
-  s.R = dat.nrow();
-  s.C = dat.ncol();
-  if (s.R < 2) Rcpp::stop("dat must have at least 2 rows");
-  if (s.C < 2) Rcpp::stop("dat must have at least 2 columns");
+  RxcState s;
+  s.m = dat.nrow();
+  s.c = dat.ncol();
+  if (s.m < 2) Rcpp::stop("dat must have at least 2 rows");
+  if (s.c < 2) Rcpp::stop("dat must have at least 2 columns");
 
-  s.Rm.assign(s.R, 0);
-  s.Cm.assign(s.C, 0);
-  s.y.assign(s.R * s.C, 0);
-  for (int i = 0; i < s.R; ++i) {
-    for (int j = 0; j < s.C; ++j) {
+  s.rmarg.assign(s.m, 0);
+  s.cmarg.assign(s.c, 0);
+  s.y.assign(s.m * s.c, 0);
+  for (int i = 0; i < s.m; ++i) {
+    for (int j = 0; j < s.c; ++j) {
       const int v = dat(i, j);
       if (v < 0) Rcpp::stop("dat entries must be non-negative");
-      s.Rm[i] += v;
-      s.Cm[j] += v;
+      s.rmarg[i] += v;
+      s.cmarg[j] += v;
     }
   }
-  s.N = 0;
-  for (int v : s.Rm) s.N += v;
+  s.n = 0;
+  for (int v : s.rmarg) s.n += v;
 
-  double sumLogR = 0.0, sumLogC = 0.0;
-  for (int v : s.Rm) sumLogR += std::lgamma(v + 1);
-  for (int v : s.Cm) sumLogC += std::lgamma(v + 1);
-  s.cns = sumLogR + sumLogC - std::lgamma(s.N + 1);
+  double sum_log_r = 0.0, sum_log_c = 0.0;
+  for (int v : s.rmarg) sum_log_r += std::lgamma(v + 1);
+  for (int v : s.cmarg) sum_log_c += std::lgamma(v + 1);
+  s.log_const = sum_log_r + sum_log_c - std::lgamma(s.n + 1);
 
-  double sumLogObs = 0.0;
-  for (int i = 0; i < s.R; ++i)
-    for (int j = 0; j < s.C; ++j)
-      sumLogObs += std::lgamma(dat(i, j) + 1);
-  s.pobs = std::exp(s.cns - sumLogObs);
+  double sum_log_obs = 0.0;
+  for (int i = 0; i < s.m; ++i)
+    for (int j = 0; j < s.c; ++j)
+      sum_log_obs += std::lgamma(dat(i, j) + 1);
+  s.p_obs = std::exp(s.log_const - sum_log_obs);
 
-  s.Rr = s.Rm;
-  s.Cr = s.Cm;
+  s.rresid = s.rmarg;
+  s.cresid = s.cmarg;
   s.pval = 1.0;
 
-  const int kmax = (s.R - 1) * (s.C - 1);
-  traverse(1, kmax, s);
+  const int tmax = (s.m - 1) * (s.c - 1);
+  traverse(1, tmax, s);
 
   // Numeric guard: pval should be in (0, 1]. Clamp to handle round-off
   // around the boundary cases.

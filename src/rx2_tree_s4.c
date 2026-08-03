@@ -45,10 +45,10 @@ typedef struct {
     double p_min;
     int y_max[MAX_ROWS];
     int mode_path[MAX_ROWS];
-} FisherStateV5C;
+} FisherState;
 
-static double compute_prob_v5c(const int *y,
-                                const FisherStateV5C *s) {
+static double compute_prob(const int *y,
+                                const FisherState *s) {
     double log_prob = s->log_const;
     int i;
     for (i = 0; i < s->m; i++) {
@@ -58,16 +58,16 @@ static double compute_prob_v5c(const int *y,
     return exp(log_prob);
 }
 
-static void joe_min_v5c_impl(int k, int descend,
+static void joe_min_impl(int k, int descend,
     int *r_avail, int c1, int n_rem, int *y,
-    FisherStateV5C *s,
+    FisherState *s,
     double *local_min_p, int *local_min_y) {
     int i;
     if (k == s->m) {
         for (i = 0; i < s->m; i++) {
             if (r_avail[i] >= 0) y[i] = c1;
         }
-        double prob = compute_prob_v5c(y, s);
+        double prob = compute_prob(y, s);
         if (prob < *local_min_p) {
             *local_min_p = prob;
             memcpy(local_min_y, y, s->m * sizeof(int));
@@ -97,26 +97,26 @@ static void joe_min_v5c_impl(int k, int descend,
     r_avail[idx] = -1;
     c1 -= y[idx];
 
-    joe_min_v5c_impl(k + 1, 1, r_avail, c1, n_rem, y,
+    joe_min_impl(k + 1, 1, r_avail, c1, n_rem, y,
                      s, local_min_p, local_min_y);
 
     if (descend) {
         memcpy(r_avail, r_avail_save,
                s->m * sizeof(int));
         memcpy(y, y_save, s->m * sizeof(int));
-        joe_min_v5c_impl(k, 0, r_avail, c1_save,
+        joe_min_impl(k, 0, r_avail, c1_save,
                          n_rem_save, y, s,
                          local_min_p, local_min_y);
     }
 }
 
-static void find_min_v5c(int c1, int *y, int d,
-                          FisherStateV5C *s) {
+static void find_min(int c1, int *y, int k_start,
+                          FisherState *s) {
     int i;
     int r_avail[MAX_ROWS];
     int n_rem = 0;
     for (i = 0; i < s->m; i++) {
-        if (i < d) r_avail[i] = -1;
+        if (i < k_start) r_avail[i] = -1;
         else { r_avail[i] = s->r[i]; n_rem += s->r[i]; }
     }
 
@@ -124,7 +124,7 @@ static void find_min_v5c(int c1, int *y, int d,
     int local_min_y[MAX_ROWS];
     memcpy(local_min_y, y, s->m * sizeof(int));
 
-    joe_min_v5c_impl(d, 1, r_avail, c1, n_rem, y, s,
+    joe_min_impl(k_start, 1, r_avail, c1, n_rem, y, s,
                      &local_min_p, local_min_y);
 
     s->p_min = local_min_p;
@@ -136,8 +136,8 @@ typedef struct {
     int y[MAX_ROWS];
 } FindMaxEntryC;
 
-static void find_max_v5c(int k_start, int c1,
-                          int *y, FisherStateV5C *s) {
+static void find_max(int k_start, int c1,
+                          int *y, FisherState *s) {
     int n_rem = s->suffix_r[k_start];
     double local_max_p = 0;
     int local_max_y[MAX_ROWS];
@@ -176,8 +176,8 @@ static void find_max_v5c(int k_start, int c1,
             continue;
         }
 
-        int d = s->m - k;
-        int denom = n_rem_curr + d;
+        int d_rem = s->m - k;
+        int denom = n_rem_curr + d_rem;
         int y_lo, y_up;
 
         if (denom == 0 || c1_rem == 0) {
@@ -185,7 +185,7 @@ static void find_max_v5c(int k_start, int c1,
         } else {
             y_up = (int)floor(
                 (double)(s->r[k] + 1) *
-                (c1_rem + d - 1) / denom);
+                (c1_rem + d_rem - 1) / denom);
             y_lo = (int)ceil(
                 (double)(s->r[k] + 1) *
                 (c1_rem + 1) / denom) - 1;
@@ -201,7 +201,7 @@ static void find_max_v5c(int k_start, int c1,
         for (y_k = y_lo; y_k <= y_up; y_k++) {
             if (sp >= FIND_MAX_STACK)
                 Rf_error("find_max stack overflow "
-                         "(capacity %d)", FIND_MAX_STACK);
+                         "(capacity %d_rem)", FIND_MAX_STACK);
             stack[sp].k = k + 1;
             stack[sp].c1 = c1_rem - y_k;
             stack[sp].n_rem = n_rem_curr - s->r[k];
@@ -219,21 +219,28 @@ static void find_max_v5c(int k_start, int c1,
     memcpy(s->y_max, local_max_y, s->m * sizeof(int));
 }
 
-static double dhyper_v5c(int x, int m, int n, int k,
+/* Hypergeometric pmf. Parameter names deliberately avoid the CM
+ * symbols m (rows), n (grand total), and k (traversal level):
+ * m_white/n_black/k_draw are the white-ball, black-ball, and draw
+ * counts of the classical urn parameterization. */
+static double dhyper_lf(int x, int m_white, int n_black, int k_draw,
                           const double *lfact) {
-    if (x < 0 || x > k || x > m || k - x > n) return 0.0;
-    double lp = lfact[m] - lfact[x] - lfact[m - x]
-              + lfact[n] - lfact[k - x] - lfact[n - k + x]
-              - lfact[m + n] + lfact[k] + lfact[m + n - k];
+    if (x < 0 || x > k_draw || x > m_white || k_draw - x > n_black)
+        return 0.0;
+    double lp = lfact[m_white] - lfact[x] - lfact[m_white - x]
+              + lfact[n_black] - lfact[k_draw - x]
+              - lfact[n_black - k_draw + x]
+              - lfact[m_white + n_black] + lfact[k_draw]
+              + lfact[m_white + n_black - k_draw];
     return exp(lp);
 }
 
 // Returns S4_CASCADE if mode-path S3 fired (caller should
 // skip remaining siblings), S4_NONE otherwise.
-static int traverse_v5c(int k, int c1, int *y,
+static int traverse(int k, int c1, int *y,
     double prob_prefix, int n_rem,
     int descend, int y_k, int dir, int mode,
-    int on_mode_path, FisherStateV5C *s) {
+    int on_mode_path, FisherState *s) {
 
     double hp = 0.0;
     int prev_yk = -1;
@@ -242,7 +249,7 @@ static int traverse_v5c(int k, int c1, int *y,
     for (;;) {
         if (k == s->m - 1) {
             y[s->m - 1] = c1;
-            double hp_last = dhyper_v5c(
+            double hp_last = dhyper_lf(
                 c1, c1, n_rem - c1,
                 s->r[s->m - 1], s->lfact);
             double prob = prob_prefix * hp_last;
@@ -271,7 +278,7 @@ static int traverse_v5c(int k, int c1, int *y,
         int c2 = n_rem - c1;
 
         if (need_full_dhyper) {
-            hp = dhyper_v5c(y_k, c1, c2,
+            hp = dhyper_lf(y_k, c1, c2,
                             s->r[k], s->lfact);
             need_full_dhyper = 0;
         } else {
@@ -311,9 +318,9 @@ static int traverse_v5c(int k, int c1, int *y,
             }
 
             s->p_max = 0;
-            find_max_v5c(k + 1, new_c1, y, s);
+            find_max(k + 1, new_c1, y, s);
             s->p_min = 1;
-            find_min_v5c(new_c1, y, k + 1, s);
+            find_min(new_c1, y, k + 1, s);
 
             // S2: find_min bulk subtraction
             if (s->p_min > s->p_obs * (1 + s->tol)) {
@@ -335,7 +342,7 @@ static int traverse_v5c(int k, int c1, int *y,
             }
         }
 
-        traverse_v5c(k + 1, new_c1, y, new_prefix,
+        traverse(k + 1, new_c1, y, new_prefix,
                      new_n_rem, 1, 0, +1, 0,
                      is_mode_node, s);
 
@@ -344,15 +351,15 @@ static int traverse_v5c(int k, int c1, int *y,
     }
 }
 
-static double choose_round(int n, int k,
+static double choose_round(int n_arg, int k_arg,
                             const double *lfact) {
-    if (k < 0 || k > n) return 0.0;
-    if (k == 0 || k == n) return 1.0;
-    return floor(exp(lfact[n] - lfact[k]
-                     - lfact[n - k]) + 0.5);
+    if (k_arg < 0 || k_arg > n_arg) return 0.0;
+    if (k_arg == 0 || k_arg == n_arg) return 1.0;
+    return floor(exp(lfact[n_arg] - lfact[k_arg]
+                     - lfact[n_arg - k_arg]) + 0.5);
 }
 
-static void precompute_cmax(FisherStateV5C *s) {
+static void precompute_cmax(FisherState *s) {
     int c0p1 = s->c[0] + 1;
     int i, k, c1, y_k;
     s->c0p1 = c0p1;
@@ -393,7 +400,7 @@ double rx2_tree_s4_c_impl(int *dat, int m) {
     if (m > MAX_ROWS)
         Rf_error("Too many rows (max %d)", MAX_ROWS);
 
-    FisherStateV5C s;
+    FisherState s;
     memset(&s, 0, sizeof(s));
     s.m = m;
     s.tol = 3.45254e-7;
@@ -467,11 +474,11 @@ double rx2_tree_s4_c_impl(int *dat, int m) {
     s.p_max = 0;
     s.p_min = 1;
 
-    find_max_v5c(0, s.c[0], y_obs, &s);
+    find_max(0, s.c[0], y_obs, &s);
 
     memcpy(s.mode_path, s.y_max, s.m * sizeof(int));
 
-    traverse_v5c(0, s.c[0], y_obs, 1.0, s.n,
+    traverse(0, s.c[0], y_obs, 1.0, s.n,
                  1, 0, +1, 0, 1, &s);
 
     return s.pval;

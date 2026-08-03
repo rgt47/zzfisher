@@ -1,21 +1,28 @@
 // rxck_tree_memo.cpp
-// First-generation r x c x k Fisher's exact test kernel implementing
+// First-generation m x c x k Fisher's exact test kernel implementing
 // the no-three-way-interaction model (Bartlett, [AB][AC][BC]).
 //
+// Notation follows the Concrete Mathematics convention of the
+// manuscripts: m rows, c columns, k layers, cell coordinates
+// (i, j, l), path index t. The letter k is reserved for the layer
+// count and never used as a coordinate. The three pairwise margins
+// carry the Bartlett factor labels: ab (row x column), ac
+// (row x layer), bc (column x layer).
+//
 // All three pairwise margins are conditioned on:
-//   y_ij. = sum_k y[i,j,k]   (row x column)
-//   y_i.k = sum_j y[i,j,k]   (row x layer)
-//   y_.jk = sum_i y[i,j,k]   (column x layer)
+//   y_ij. = sum_l y[i,j,l]   (row x column, AB)
+//   y_i.l = sum_j y[i,j,l]   (row x layer, AC)
+//   y_.jl = sum_i y[i,j,l]   (column x layer, BC)
 //
 // Under the null of no three-way interaction, the conditional
 // distribution given these pairwise margins is
-//   P(Y | margins) proportional to 1 / prod_{i,j,k} y_ijk!
-// so the test statistic T(Y) = sum lgamma(y_ijk + 1) orders tables
+//   P(Y | margins) proportional to 1 / prod_{i,j,l} y_ijl!
+// so the test statistic T(Y) = sum lgamma(y_ijl + 1) orders tables
 // from least extreme (small T) to most extreme (large T).
 //
 // Path linearization (Rxc1 paper p.23, with handwritten correction):
-//   l = r + (c-1)(R-1) + k(R-1)(C-1)       (1-indexed)
-//   total free cells = (R-1)(C-1)(K-1)
+//   t = i + (j-1)(m-1) + (l-1)(m-1)(c-1)     (1-indexed)
+//   total free cells = (m-1)(c-1)(k-1)
 //
 // After placing all free cells, the dependent cells in the last layer,
 // last column, and last row are computed from the pairwise margins;
@@ -34,7 +41,7 @@
 //     No multivariate-hypergeometric mode pruning yet.
 //   - Validated against a pure-R brute-force enumerator for the 2x2x2
 //     case in inst/tinytest/test_htest.R (one free cell, easy oracle).
-//   - Larger R*C*K becomes intractable quickly (factorial growth in
+//   - Larger m*c*k becomes intractable quickly (factorial growth in
 //     reference set); this kernel is intended for small tables only.
 
 #include <Rcpp.h>
@@ -49,16 +56,16 @@ static const double RXCK_TOL = 3.45254e-7;
 namespace rxck {
 
 struct State {
-  int R, C, K;
+  int m, c, k;                 // rows, columns, layers
   // Pairwise margins (computed from observed table):
-  std::vector<int> RC; // row x col, indexed [i*C + j]
-  std::vector<int> RK; // row x layer
-  std::vector<int> CK; // col x layer
+  std::vector<int> ab;         // row x col, indexed [i*c + j]
+  std::vector<int> ac;         // row x layer
+  std::vector<int> bc;         // col x layer
   // Running residuals during path traversal:
-  std::vector<int> RC_resid;
-  std::vector<int> RK_resid;
-  std::vector<int> CK_resid;
-  // Current table; flat R*C*K, indexed [(i*C + j)*K + k].
+  std::vector<int> ab_resid;
+  std::vector<int> ac_resid;
+  std::vector<int> bc_resid;
+  // Current table; flat m*c*k, indexed [(i*c + j)*k + l].
   std::vector<int> y;
 
   double T_obs;        // sum lgamma(y_obs + 1)
@@ -66,12 +73,12 @@ struct State {
   double mass_extreme; // accumulated sum exp(-T) over { Y : T >= T_obs }
 };
 
-inline int yidx(const State& s, int i, int j, int k) {
-  return (i * s.C + j) * s.K + k;
+inline int yidx(const State& s, int i, int j, int l) {
+  return (i * s.c + j) * s.k + l;
 }
-inline int rcidx(const State& s, int i, int j) { return i * s.C + j; }
-inline int rkidx(const State& s, int i, int k) { return i * s.K + k; }
-inline int ckidx(const State& s, int j, int k) { return j * s.K + k; }
+inline int abidx(const State& s, int i, int j) { return i * s.c + j; }
+inline int acidx(const State& s, int i, int l) { return i * s.k + l; }
+inline int bcidx(const State& s, int j, int l) { return j * s.k + l; }
 
 double table_T(const State& s) {
   double sum = 0.0;
@@ -83,98 +90,98 @@ double table_T(const State& s) {
 // resulting cell is negative or if a consistency check (over-determined
 // cell values agreeing across margins) fails.
 bool finish_table(State& s) {
-  const int R1 = s.R - 1;
-  const int C1 = s.C - 1;
-  const int K1 = s.K - 1;
+  const int mm1 = s.m - 1;
+  const int cm1 = s.c - 1;
+  const int km1 = s.k - 1;
 
-  // 1. Last layer for free (i, j) cells: y[i, j, K-1] from RC margin.
-  for (int i = 0; i < R1; ++i) {
-    for (int j = 0; j < C1; ++j) {
+  // 1. Last layer for free (i, j) cells: y[i, j, k-1] from AB margin.
+  for (int i = 0; i < mm1; ++i) {
+    for (int j = 0; j < cm1; ++j) {
       int sum = 0;
-      for (int k = 0; k < K1; ++k) sum += s.y[yidx(s, i, j, k)];
-      int v = s.RC[rcidx(s, i, j)] - sum;
+      for (int l = 0; l < km1; ++l) sum += s.y[yidx(s, i, j, l)];
+      int v = s.ab[abidx(s, i, j)] - sum;
       if (v < 0) return false;
-      s.y[yidx(s, i, j, K1)] = v;
+      s.y[yidx(s, i, j, km1)] = v;
     }
   }
-  // 2. Last column for free (i, k) cells (k < K-1): from RK margin.
-  for (int i = 0; i < R1; ++i) {
-    for (int k = 0; k < K1; ++k) {
+  // 2. Last column for free (i, l) cells (l < k-1): from AC margin.
+  for (int i = 0; i < mm1; ++i) {
+    for (int l = 0; l < km1; ++l) {
       int sum = 0;
-      for (int j = 0; j < C1; ++j) sum += s.y[yidx(s, i, j, k)];
-      int v = s.RK[rkidx(s, i, k)] - sum;
+      for (int j = 0; j < cm1; ++j) sum += s.y[yidx(s, i, j, l)];
+      int v = s.ac[acidx(s, i, l)] - sum;
       if (v < 0) return false;
-      s.y[yidx(s, i, C1, k)] = v;
+      s.y[yidx(s, i, cm1, l)] = v;
     }
   }
-  // 3. Last row for free (j, k) cells (j < C-1, k < K-1): from CK margin.
-  for (int j = 0; j < C1; ++j) {
-    for (int k = 0; k < K1; ++k) {
+  // 3. Last row for free (j, l) cells (j < c-1, l < k-1): from BC margin.
+  for (int j = 0; j < cm1; ++j) {
+    for (int l = 0; l < km1; ++l) {
       int sum = 0;
-      for (int i = 0; i < R1; ++i) sum += s.y[yidx(s, i, j, k)];
-      int v = s.CK[ckidx(s, j, k)] - sum;
+      for (int i = 0; i < mm1; ++i) sum += s.y[yidx(s, i, j, l)];
+      int v = s.bc[bcidx(s, j, l)] - sum;
       if (v < 0) return false;
-      s.y[yidx(s, R1, j, k)] = v;
+      s.y[yidx(s, mm1, j, l)] = v;
     }
   }
-  // 4. y[i, C-1, K-1] for i < R-1: from RC margin (sum over layers
-  //    in the last column for row i must equal RC[i, C-1]).
-  //    Cross-check with RK margin (sum over columns in last layer
-  //    for row i must equal RK[i, K-1]).
-  for (int i = 0; i < R1; ++i) {
-    int sum_k = 0;
-    for (int k = 0; k < K1; ++k) sum_k += s.y[yidx(s, i, C1, k)];
-    int v = s.RC[rcidx(s, i, C1)] - sum_k;
+  // 4. y[i, c-1, k-1] for i < m-1: from AB margin (sum over layers
+  //    in the last column for row i must equal ab[i, c-1]).
+  //    Cross-check with AC margin (sum over columns in last layer
+  //    for row i must equal ac[i, k-1]).
+  for (int i = 0; i < mm1; ++i) {
+    int sum_l = 0;
+    for (int l = 0; l < km1; ++l) sum_l += s.y[yidx(s, i, cm1, l)];
+    int v = s.ab[abidx(s, i, cm1)] - sum_l;
     if (v < 0) return false;
-    s.y[yidx(s, i, C1, K1)] = v;
-    int rk_check = 0;
-    for (int j = 0; j < s.C; ++j) rk_check += s.y[yidx(s, i, j, K1)];
-    if (rk_check != s.RK[rkidx(s, i, K1)]) return false;
+    s.y[yidx(s, i, cm1, km1)] = v;
+    int ac_check = 0;
+    for (int j = 0; j < s.c; ++j) ac_check += s.y[yidx(s, i, j, km1)];
+    if (ac_check != s.ac[acidx(s, i, km1)]) return false;
   }
-  // 5. y[R-1, j, K-1] for j < C-1: from CK margin.
-  //    Cross-check with RC margin.
-  for (int j = 0; j < C1; ++j) {
+  // 5. y[m-1, j, k-1] for j < c-1: from BC margin.
+  //    Cross-check with AB margin.
+  for (int j = 0; j < cm1; ++j) {
     int sum_i = 0;
-    for (int i = 0; i < R1; ++i) sum_i += s.y[yidx(s, i, j, K1)];
-    int v = s.CK[ckidx(s, j, K1)] - sum_i;
+    for (int i = 0; i < mm1; ++i) sum_i += s.y[yidx(s, i, j, km1)];
+    int v = s.bc[bcidx(s, j, km1)] - sum_i;
     if (v < 0) return false;
-    s.y[yidx(s, R1, j, K1)] = v;
-    int rc_check = 0;
-    for (int k = 0; k < s.K; ++k) rc_check += s.y[yidx(s, R1, j, k)];
-    if (rc_check != s.RC[rcidx(s, R1, j)]) return false;
+    s.y[yidx(s, mm1, j, km1)] = v;
+    int ab_check = 0;
+    for (int l = 0; l < s.k; ++l) ab_check += s.y[yidx(s, mm1, j, l)];
+    if (ab_check != s.ab[abidx(s, mm1, j)]) return false;
   }
-  // 6. y[R-1, C-1, k] for k < K-1: from CK margin.
-  //    Cross-check with RK margin.
-  for (int k = 0; k < K1; ++k) {
+  // 6. y[m-1, c-1, l] for l < k-1: from BC margin.
+  //    Cross-check with AC margin.
+  for (int l = 0; l < km1; ++l) {
     int sum_i = 0;
-    for (int i = 0; i < R1; ++i) sum_i += s.y[yidx(s, i, C1, k)];
-    int v = s.CK[ckidx(s, C1, k)] - sum_i;
+    for (int i = 0; i < mm1; ++i) sum_i += s.y[yidx(s, i, cm1, l)];
+    int v = s.bc[bcidx(s, cm1, l)] - sum_i;
     if (v < 0) return false;
-    s.y[yidx(s, R1, C1, k)] = v;
-    int rk_check = 0;
-    for (int j = 0; j < s.C; ++j) rk_check += s.y[yidx(s, R1, j, k)];
-    if (rk_check != s.RK[rkidx(s, R1, k)]) return false;
+    s.y[yidx(s, mm1, cm1, l)] = v;
+    int ac_check = 0;
+    for (int j = 0; j < s.c; ++j) ac_check += s.y[yidx(s, mm1, j, l)];
+    if (ac_check != s.ac[acidx(s, mm1, l)]) return false;
   }
-  // 7. Final cell y[R-1, C-1, K-1]: any margin works; use RC.
-  //    Cross-check with RK and CK.
+  // 7. Final cell y[m-1, c-1, k-1]: any margin works; use AB.
+  //    Cross-check with AC and BC.
   {
-    int sum_k = 0;
-    for (int k = 0; k < K1; ++k) sum_k += s.y[yidx(s, R1, C1, k)];
-    int v = s.RC[rcidx(s, R1, C1)] - sum_k;
+    int sum_l = 0;
+    for (int l = 0; l < km1; ++l) sum_l += s.y[yidx(s, mm1, cm1, l)];
+    int v = s.ab[abidx(s, mm1, cm1)] - sum_l;
     if (v < 0) return false;
-    s.y[yidx(s, R1, C1, K1)] = v;
-    int rk_check = 0;
-    for (int j = 0; j < s.C; ++j) rk_check += s.y[yidx(s, R1, j, K1)];
-    if (rk_check != s.RK[rkidx(s, R1, K1)]) return false;
-    int ck_check = 0;
-    for (int i = 0; i < s.R; ++i) ck_check += s.y[yidx(s, i, C1, K1)];
-    if (ck_check != s.CK[ckidx(s, C1, K1)]) return false;
+    s.y[yidx(s, mm1, cm1, km1)] = v;
+    int ac_check = 0;
+    for (int j = 0; j < s.c; ++j) ac_check += s.y[yidx(s, mm1, j, km1)];
+    if (ac_check != s.ac[acidx(s, mm1, km1)]) return false;
+    int bc_check = 0;
+    for (int i = 0; i < s.m; ++i) bc_check += s.y[yidx(s, i, cm1, km1)];
+    if (bc_check != s.bc[bcidx(s, cm1, km1)]) return false;
   }
   return true;
 }
 
-void traverse(int l, int lmax, State& s) {
-  if (l > lmax) {
+void traverse(int t, int tmax, State& s) {
+  if (t > tmax) {
     if (!finish_table(s)) return;
     double T = table_T(s);
     double w = std::exp(-T);
@@ -182,38 +189,38 @@ void traverse(int l, int lmax, State& s) {
     if (T - s.T_obs >= -RXCK_TOL) s.mass_extreme += w;
     return;
   }
-  // Decode l (1-indexed) -> (r, c, k) zero-indexed via
-  //   l_0 = r + c*(R-1) + k*(R-1)*(C-1)
-  const int l0 = l - 1;
-  const int R1 = s.R - 1;
-  const int C1 = s.C - 1;
-  const int per_layer = R1 * C1;
-  const int k = l0 / per_layer;
-  const int rem = l0 % per_layer;
-  const int c = rem / R1;
-  const int r = rem % R1;
+  // Decode t (1-indexed) -> (i, j, l) zero-indexed via
+  //   t_0 = i + j*(m-1) + l*(m-1)*(c-1)
+  const int t0 = t - 1;
+  const int mm1 = s.m - 1;
+  const int cm1 = s.c - 1;
+  const int per_layer = mm1 * cm1;
+  const int l = t0 / per_layer;
+  const int rem = t0 % per_layer;
+  const int j = rem / mm1;
+  const int i = rem % mm1;
 
   // Upper bound = min of the three pairwise residuals at this cell.
   // (These were decremented by previous placements at cells that share
   // each pairwise margin.)
   const int x_up = std::min({
-    s.RC_resid[rcidx(s, r, c)],
-    s.RK_resid[rkidx(s, r, k)],
-    s.CK_resid[ckidx(s, c, k)]
+    s.ab_resid[abidx(s, i, j)],
+    s.ac_resid[acidx(s, i, l)],
+    s.bc_resid[bcidx(s, j, l)]
   });
   if (x_up < 0) return;
 
   for (int x = 0; x <= x_up; ++x) {
-    s.y[yidx(s, r, c, k)] = x;
-    s.RC_resid[rcidx(s, r, c)] -= x;
-    s.RK_resid[rkidx(s, r, k)] -= x;
-    s.CK_resid[ckidx(s, c, k)] -= x;
-    traverse(l + 1, lmax, s);
-    s.RC_resid[rcidx(s, r, c)] += x;
-    s.RK_resid[rkidx(s, r, k)] += x;
-    s.CK_resid[ckidx(s, c, k)] += x;
+    s.y[yidx(s, i, j, l)] = x;
+    s.ab_resid[abidx(s, i, j)] -= x;
+    s.ac_resid[acidx(s, i, l)] -= x;
+    s.bc_resid[bcidx(s, j, l)] -= x;
+    traverse(t + 1, tmax, s);
+    s.ab_resid[abidx(s, i, j)] += x;
+    s.ac_resid[acidx(s, i, l)] += x;
+    s.bc_resid[bcidx(s, j, l)] += x;
   }
-  s.y[yidx(s, r, c, k)] = 0;
+  s.y[yidx(s, i, j, l)] = 0;
 }
 
 } // namespace rxck
@@ -228,30 +235,30 @@ double rxck_tree_memo_cpp(IntegerVector dat) {
     Rcpp::stop("dat must be a 3D integer array");
 
   rxck::State s;
-  s.R = d[0];
-  s.C = d[1];
-  s.K = d[2];
-  if (s.R < 2 || s.C < 2 || s.K < 2)
+  s.m = d[0];
+  s.c = d[1];
+  s.k = d[2];
+  if (s.m < 2 || s.c < 2 || s.k < 2)
     Rcpp::stop("each dimension must be at least 2");
 
-  const int total = s.R * s.C * s.K;
+  const int total = s.m * s.c * s.k;
   s.y.assign(total, 0);
-  s.RC.assign(s.R * s.C, 0);
-  s.RK.assign(s.R * s.K, 0);
-  s.CK.assign(s.C * s.K, 0);
+  s.ab.assign(s.m * s.c, 0);
+  s.ac.assign(s.m * s.k, 0);
+  s.bc.assign(s.c * s.k, 0);
 
   // Source layout is column-major (R's array storage):
-  //   dat[i + R*j + R*C*k] -> cell (i, j, k).
-  // Internal layout uses [(i*C + j)*K + k].
-  for (int k = 0; k < s.K; ++k) {
-    for (int j = 0; j < s.C; ++j) {
-      for (int i = 0; i < s.R; ++i) {
-        int v = dat[i + s.R * j + s.R * s.C * k];
+  //   dat[i + m*j + m*c*l] -> cell (i, j, l).
+  // Internal layout uses [(i*c + j)*k + l].
+  for (int l = 0; l < s.k; ++l) {
+    for (int j = 0; j < s.c; ++j) {
+      for (int i = 0; i < s.m; ++i) {
+        int v = dat[i + s.m * j + s.m * s.c * l];
         if (v < 0) Rcpp::stop("dat entries must be non-negative");
-        s.y[rxck::yidx(s, i, j, k)] = v;
-        s.RC[rxck::rcidx(s, i, j)] += v;
-        s.RK[rxck::rkidx(s, i, k)] += v;
-        s.CK[rxck::ckidx(s, j, k)] += v;
+        s.y[rxck::yidx(s, i, j, l)] = v;
+        s.ab[rxck::abidx(s, i, j)] += v;
+        s.ac[rxck::acidx(s, i, l)] += v;
+        s.bc[rxck::bcidx(s, j, l)] += v;
       }
     }
   }
@@ -259,14 +266,14 @@ double rxck_tree_memo_cpp(IntegerVector dat) {
 
   // Reset y so the recursive traversal builds fresh tables.
   std::fill(s.y.begin(), s.y.end(), 0);
-  s.RC_resid = s.RC;
-  s.RK_resid = s.RK;
-  s.CK_resid = s.CK;
+  s.ab_resid = s.ab;
+  s.ac_resid = s.ac;
+  s.bc_resid = s.bc;
   s.mass_total = 0.0;
   s.mass_extreme = 0.0;
 
-  const int lmax = (s.R - 1) * (s.C - 1) * (s.K - 1);
-  rxck::traverse(1, lmax, s);
+  const int tmax = (s.m - 1) * (s.c - 1) * (s.k - 1);
+  rxck::traverse(1, tmax, s);
 
   if (s.mass_total <= 0.0)
     Rcpp::stop("rxck enumeration produced no feasible tables; "
