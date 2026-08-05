@@ -268,7 +268,7 @@ static void find_max(int k_start, int c1,
         for (y_k = y_lo; y_k <= y_up; y_k++) {
             if (sp >= FIND_MAX_STACK)
                 Rf_error("find_max stack overflow "
-                         "(capacity %d_rem)", FIND_MAX_STACK);
+                         "(capacity %d)", FIND_MAX_STACK);
             stack[sp].k = k + 1;
             stack[sp].c1 = c1_rem - y_k;
             stack[sp].n_rem = n_rem_curr - s->r[k];
