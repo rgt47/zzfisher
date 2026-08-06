@@ -5,6 +5,10 @@
     .Call(`_zzfisher_rx2_net_dp_cpp`, dat)
 }
 
+.rx2_net_sweep_cpp <- function(dat, eps_merge = 1e-12) {
+    .Call(`_zzfisher_rx2_net_sweep_cpp`, dat, eps_merge)
+}
+
 .rx2_net_vander_cpp <- function(dat) {
     .Call(`_zzfisher_rx2_net_vander_cpp`, dat)
 }

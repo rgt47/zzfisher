@@ -13,7 +13,8 @@ tree_s4_c      = tree_s4_c,
 tree_memo_cpp  = tree_memo_cpp,
 tree_dp_cpp    = tree_dp_cpp,
 net_vander_cpp = net_vander_cpp,
-net_dp_cpp     = net_dp_cpp
+net_dp_cpp     = net_dp_cpp,
+net_sweep_cpp  = net_sweep_cpp
 )
 
 for (nm in names(all_fns)) {

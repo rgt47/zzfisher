@@ -170,6 +170,30 @@ net_dp_cpp <- function(dat) {
   make_htest(pval, dname, '[net_dp_cpp]')
 }
 
+#' Network state-sweep with prefix-class aggregation (C++)
+#'
+#' Stage-by-stage sweep over (stage, budget) states: paths are
+#' aggregated into prefix log-mass classes per state, classified
+#' against exact suffix extrema, and whole classes are subtracted
+#' or dropped in O(1); at the last two rows each class contributes
+#' one prefix-sum difference over shared leaf masses. The
+#' Mehta-Patel network algorithm with the Clarkson-Fan-Joe past
+#' device, specialized to two columns.
+#'
+#' @param dat Integer matrix (r x 2 or r x c contingency table) or
+#'   3D integer array (r x c x k).
+#' @return An htest object matching \code{fisher.test()} output.
+#' @export
+net_sweep_cpp <- function(dat) {
+  dname <- deparse(substitute(dat))
+  pval <- switch(.infer_shape(dat),
+    rx2  = .rx2_net_sweep_cpp(dat),
+    rxc  = .rxc_tree_memo_cpp(dat),
+    rxck = .rxck_tree_memo_cpp(dat)
+  )
+  make_htest(pval, dname, '[net_sweep_cpp]')
+}
+
 # tree_memo_profile returns a list with $pvalue and profiling fields.
 # The htest gets the profile attached on $profile.
 

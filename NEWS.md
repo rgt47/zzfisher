@@ -1,3 +1,27 @@
+# zzfisher 0.4.0
+
+* New kernel `net_sweep_cpp`: a state-sweep (network) algorithm for
+  m x 2 tables, per Sections 3B and 3B.1 of the project white paper
+  `c2_separability_whitepaper_2026-08-04`. The sweep proceeds stage
+  by stage over (stage, spent budget) states; paths reaching a
+  state are aggregated into prefix log-mass classes (the
+  Clarkson-Fan-Joe past device, with dense arrays in place of
+  hashing); classes are classified against the exact suffix
+  extrema of the c = 2 separability DP, so a class entirely in the
+  complement region is subtracted in O(1) via a closed-form
+  Vandermonde suffix mass, a class entirely in the significance
+  region is dropped, and only straddling classes propagate. At the
+  last two rows, leaf masses and prefix sums are shared per state
+  and each class contributes a single prefix-sum difference, with
+  nested qualifying intervals extracted by expanding two pointers.
+  This is the Mehta-Patel-Joe-Clarkson-Requena algorithm
+  specialized to two columns. Unlike FEXACT it has no fixed
+  workspace: storage grows with the live class count.
+* Verified against `fisher.test()` over 348 random tables (m = 2
+  to 10, including tied margins, degenerate tables, and the
+  large-m regime that forces FEXACT workspace growth): max
+  discrepancy 8.0e-14.
+
 # zzfisher 0.3.0
 
 * Redesigned the m x 2 tree kernel (`tree_memo_c`) around the

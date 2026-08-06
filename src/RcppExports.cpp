@@ -21,6 +21,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rx2_net_sweep_cpp
+double rx2_net_sweep_cpp(IntegerMatrix dat, double eps_merge);
+RcppExport SEXP _zzfisher_rx2_net_sweep_cpp(SEXP datSEXP, SEXP eps_mergeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
+    Rcpp::traits::input_parameter< double >::type eps_merge(eps_mergeSEXP);
+    rcpp_result_gen = Rcpp::wrap(rx2_net_sweep_cpp(dat, eps_merge));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rx2_net_vander_cpp
 double rx2_net_vander_cpp(IntegerMatrix dat);
 RcppExport SEXP _zzfisher_rx2_net_vander_cpp(SEXP datSEXP) {
@@ -112,6 +124,7 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_zzfisher_rx2_net_dp_cpp", (DL_FUNC) &_zzfisher_rx2_net_dp_cpp, 1},
+    {"_zzfisher_rx2_net_sweep_cpp", (DL_FUNC) &_zzfisher_rx2_net_sweep_cpp, 2},
     {"_zzfisher_rx2_net_vander_cpp", (DL_FUNC) &_zzfisher_rx2_net_vander_cpp, 1},
     {"_zzfisher_rx2_tree_dp_cpp", (DL_FUNC) &_zzfisher_rx2_tree_dp_cpp, 1},
     {"_zzfisher_rx2_tree_memo_c", (DL_FUNC) &_zzfisher_rx2_tree_memo_c, 1},
