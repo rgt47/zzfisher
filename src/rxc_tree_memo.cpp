@@ -21,13 +21,17 @@
 //
 // Tolerance constant matches the rx2 family: 3.45254e-7 (R fisher.test).
 //
-// Pruning: feasibility-only. Joe/Requena majorization-based max/min
-// pruning (analog of rx2_tree_memo's find_max/find_min) is deferred to
-// a second generation; it requires a multi-column hypergeometric mode
-// formula (the 9/13/25 research challenge note).
+// Pruning: acceptance-region skip with a capped water-filling
+// bound (the Joe-style exact-relaxation analog of rx2_tree_memo's
+// suffix extrema, valid for any c) plus a concavity-based sibling
+// cutoff (the r x c analog of the m x 2 cascade). See the bound
+// comment below. The complement-side bulk subtraction of the
+// m x 2 kernels has no r x c analogue (no closed-form suffix
+// mass for c >= 3).
 
 #include <Rcpp.h>
 #include <vector>
+#include <algorithm>
 #include <cmath>
 
 using namespace Rcpp;
@@ -46,18 +50,19 @@ struct RxcState {
   double log_thresh;                 // log(p_obs * (1 + tol))
   double pval;                       // antipvalue, starts at 1
   std::vector<double> lf;            // lf[v] = log(v!)
+  // Per-depth caps scratch. One buffer per path position: a single
+  // shared buffer would be clobbered by the recursive calls made
+  // between two siblings, leaving the parent's later children
+  // bounded with a descendant's caps (observed defect: p-values
+  // wrong by up to 0.8 from wrongly skipped live subtrees).
+  std::vector<std::vector<int>> caps_at;
   long n_skipped;                    // subtrees skipped by the bound
 };
 
 inline int yidx(const RxcState& s, int i, int j) { return i * s.c + j; }
 
-inline double table_p(const RxcState& s) {
-  double sum = 0.0;
-  for (int v : s.y) sum += std::lgamma(v + 1);
-  return std::exp(s.log_const - sum);
-}
 
-// --- Acceptance-region skip via a balanced-split relaxation ------
+// --- Acceptance-region skip via capped water-filling -------------
 //
 // The m x 2 kernel prunes with exact subtree extrema, which exist
 // there because two columns make log Pr separable into concave
@@ -65,49 +70,77 @@ inline double table_p(const RxcState& s) {
 // c >= 3: the cells of a partial table are tied by both row and
 // column constraints simultaneously.
 //
-// What does transfer is a relaxation. For q free cells summing to
-// s, dropping all constraints except the total gives
+// What transfers is the relaxation, and for the current column it
+// can respect the row residuals. Maximize
 //
-//   max { -sum_t log(y_t!) : sum y_t = s, y_t >= 0 }
-//     = -(q - rho) * log(floor(s/q)!) - rho * log(ceil(s/q)!),
-//     rho = s mod q,
+//   sum_t -log(y_t!)  s.t.  sum_t y_t = budget, 0 <= y_t <= cap_t,
 //
-// attained at the balanced split (proof: -log(y!) is concave, so
-// moving a unit from a cell exceeding another by two or more
-// strictly increases the objective; hence maxima have all cells
-// within one of each other). Relaxing constraints only enlarges
-// the feasible set, so applying this per remaining column yields a
-// valid upper bound on the log-probability of every completion.
-// When that bound does not exceed log(Pr_obs * (1 + tol)), the
-// entire subtree lies in the significance region S and contributes
-// nothing to the antipvalue, so it may be skipped exactly.
+// where the caps are the residuals of the rows still open in the
+// current column. The objective is separable and concave with
+// identical terms, so the maximum is capped water-filling:
+// allocate as evenly as possible, saturating small caps (the
+// greedy-exactness lemma of the c = 2 white paper, Section 2,
+// applied with box constraints). Dropping the coupling of a row's
+// residual across columns keeps this a valid relaxation, and it is
+// never looser than the uncapped balanced split (caps of +infinity
+// recover it). Later columns use the uncapped split: their budgets
+// do not depend on the value placed at the current cell, so that
+// part of the bound is a per-node constant, and a fully capped
+// per-child bound measured 2.7x slower end to end than this
+// split — the extra tightness did not pay for its cost. When the
+// bound on every completion's log-probability does not exceed
+// log(Pr_obs * (1 + tol)), the subtree lies in the significance
+// region S and is skipped exactly.
 //
-// Unlike the m x 2 case the bound is not the true extremum, so no
-// interval structure over siblings is claimed and no scan cutoff
-// is applied. The complement side has no analogue at all: bulk
-// subtraction there needs a subtree's total mass, which for c = 2
-// is Vandermonde's convolution but for c >= 3 has no closed form.
+// Convexity gives a sibling cutoff on top. The child bound as a
+// function of the value x placed at the current cell is
+// -log(x!) plus value functions of concave programs whose
+// right-hand sides (the column budget and row-i cap) move linearly
+// in x, hence concave in x. The children that survive the bound
+// therefore form a contiguous interval, and the scan over x stops
+// at the first sub-threshold child after the interval — the r x c
+// analog of the m x 2 cascade.
+//
+// The complement side still has no analogue: bulk subtraction
+// needs a subtree's total mass, which for c = 2 is Vandermonde's
+// convolution but for c >= 3 has no closed form.
 // See docs/c2_separability_whitepaper_2026-08-04.md, Section 5.
+
+// Max of sum -log(y_t!) over sum y_t = budget, 0 <= y_t <= caps[t],
+// caps pre-sorted ascending. -infinity if the caps cannot absorb
+// the budget.
+double water_fill_lp(const RxcState& s, int budget,
+                     const std::vector<int>& caps, int q) {
+  if (q <= 0) return (budget == 0) ? 0.0 : -INFINITY;
+  double bound = 0.0;
+  int rem_budget = budget;
+  for (int t = 0; t < q; ++t) {
+    const int cells_left = q - t;
+    const int level = rem_budget / cells_left;
+    if (caps[t] <= level) {
+      // Small cap saturates; redistribute the rest more thickly.
+      bound -= s.lf[caps[t]];
+      rem_budget -= caps[t];
+    } else {
+      // No remaining cap binds: balanced split of the remainder.
+      const int r2 = rem_budget % cells_left;
+      bound -= (double)(cells_left - r2) * s.lf[level]
+             + (double)r2 * s.lf[level + 1];
+      return bound;
+    }
+  }
+  return (rem_budget == 0) ? bound : -INFINITY;
+}
+
+// Uncapped balanced split: water-filling with no binding caps.
+// Used for later columns, whose budgets do not depend on the value
+// placed at the current cell, so this part of the bound is a
+// per-node constant.
 inline double balanced_split_lp(const RxcState& s, int q, int total) {
   if (q <= 0) return (total == 0) ? 0.0 : -INFINITY;
   const int base = total / q, rem = total % q;
   return -((double)(q - rem) * s.lf[base] +
            (double)rem * s.lf[base + 1]);
-}
-
-// Upper bound on log Pr over all completions of the current state,
-// given the log-mass already committed to placed and determined
-// cells. Column j has (m - 1 - i) free cells left in this pass
-// plus its determined last-row cell, which the relaxation absorbs
-// by treating the column residual as spread over m - i cells;
-// later columns are unconstrained apart from their margins.
-double completion_upper_lp(const RxcState& s, int i, int j,
-                           double placed_lp) {
-  double bound = placed_lp;
-  bound += balanced_split_lp(s, s.m - i, s.cresid[j]);
-  for (int jj = j + 1; jj < s.c; ++jj)
-    bound += balanced_split_lp(s, s.m, s.cresid[jj]);
-  return s.log_const + bound;
 }
 
 // After path traversal completes, fill last column and last row from
@@ -145,10 +178,22 @@ bool finish_table(RxcState& s) {
   return true;
 }
 
+// Children are bounded before recursing, so a subtree is skipped
+// without entering it, and by concavity of the child bound in x
+// the surviving children form an interval: the scan breaks at the
+// first sub-threshold child after a surviving one.
 void traverse(int t, int tmax, RxcState& s, double placed_lp) {
   if (t > tmax) {
     if (!finish_table(s)) return;
-    double p = table_p(s);
+    // placed_lp carries -log(x!) of every free cell, so only the
+    // determined last column and last row need summing.
+    double det = 0.0;
+    const int mm1 = s.m - 1, cm1 = s.c - 1;
+    for (int ii = 0; ii < s.m; ++ii)
+      det += s.lf[s.y[yidx(s, ii, cm1)]];
+    for (int jj = 0; jj < cm1; ++jj)
+      det += s.lf[s.y[yidx(s, mm1, jj)]];
+    const double p = std::exp(s.log_const + placed_lp - det);
     if (p - s.p_obs > s.p_obs * RXC_TOL) s.pval -= p;
     return;
   }
@@ -157,13 +202,6 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp) {
   const int i = tt % (s.m - 1);
   const int j = tt / (s.m - 1);
 
-  // Acceptance-region skip: if no completion can exceed the
-  // threshold, the whole subtree contributes nothing.
-  if (completion_upper_lp(s, i, j, placed_lp) <= s.log_thresh) {
-    ++s.n_skipped;
-    return;
-  }
-
   // Lower bound: row i residual must be absorbable by remaining-cols
   // capacity (cols j+1..c-1), so x >= rresid - sum of those cresid.
   int sum_rest_cols = 0;
@@ -171,7 +209,31 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp) {
   const int x_lo = std::max(0, s.rresid[i] - sum_rest_cols);
   const int x_up = std::min(s.rresid[i], s.cresid[j]);
 
+  // Per-node constants of the child bound: the later columns'
+  // uncapped balanced splits (their budgets do not involve x) and
+  // the current column's caps (rows i+1..m-1; row i is excluded,
+  // so the caps do not involve x either), sorted once.
+  double later = 0.0;
+  for (int jj = j + 1; jj < s.c; ++jj)
+    later += balanced_split_lp(s, s.m, s.cresid[jj]);
+  std::vector<int>& caps = s.caps_at[t];
+  caps.clear();
+  for (int ii = i + 1; ii < s.m; ++ii)
+    caps.push_back(s.rresid[ii]);
+  std::sort(caps.begin(), caps.end());
+  const int q_cur = (int)caps.size();
+  const double node_const = s.log_const + placed_lp + later;
+
+  bool seen_live = false;
   for (int x = x_lo; x <= x_up; ++x) {
+    const double bnd = node_const - s.lf[x] +
+      water_fill_lp(s, s.cresid[j] - x, caps, q_cur);
+    if (bnd <= s.log_thresh) {
+      ++s.n_skipped;
+      if (seen_live) break;   // concavity: past the live interval
+      continue;
+    }
+    seen_live = true;
     s.y[yidx(s, i, j)] = x;
     s.rresid[i] -= x;
     s.cresid[j] -= x;
@@ -230,6 +292,8 @@ double rxc_tree_memo_cpp(IntegerMatrix dat) {
     s.lf[v] = s.lf[v - 1] + std::log((double)v);
 
   const int tmax = (s.m - 1) * (s.c - 1);
+  s.caps_at.assign(tmax + 1, std::vector<int>());
+  for (auto& v : s.caps_at) v.reserve(s.m);
   traverse(1, tmax, s, 0.0);
 
   // Numeric guard: pval should be in (0, 1]. Clamp to handle round-off

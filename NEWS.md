@@ -1,5 +1,20 @@
 # zzfisher 0.4.0
 
+* Sweep constant-factor pass: children of a straddling class are
+  classified at creation against per-stage threshold arrays, so
+  dropped and bulk-subtracted children never enter the stage
+  buffers and no stage-entry classification pass exists. Roughly
+  doubles throughput at the heavy cells; on the 36-cell
+  wrapper-stripped grid the sweep now beats raw FEXACT in 22 of
+  36 cells (median cell ratio 1.30).
+* r x c kernel: the balanced-split skip is upgraded to capped
+  water-filling for the current column (the Joe-style
+  exact-relaxation bound, respecting row residuals) with a
+  concavity-based sibling cutoff (the r x c analog of the m x 2
+  cascade). Verified to 7.5e-13 against fisher.test over 170
+  random tables; 17 percent faster on a fixed seeded set, with
+  dense cells gaining up to 1.9x and the sparsest cell regressing
+  14 percent.
 * New kernel `net_sweep_cpp`: a state-sweep (network) algorithm for
   m x 2 tables, per Sections 3B and 3B.1 of the project white paper
   `c2_separability_whitepaper_2026-08-04`. The sweep proceeds stage

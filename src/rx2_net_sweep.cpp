@@ -119,87 +119,110 @@ void sort_merge(std::vector<ClassEntry>& cl, double eps) {
   cl.resize(out);
 }
 
+// Children of a straddling class are classified at creation:
+// dropped and bulk-subtracted children never enter the stage
+// buffers, and every pushed class arrives certified straddling,
+// so no stage-entry classification pass exists. The per-child
+// tests use thresholds precomputed per (stage, state) as pure
+// q-comparisons: a child straddles iff
+//   thr_lo[b'] < q' <= thr_hi[b'],
+// where thr_hi[b'] = t - log D - maxh[k+1][b'] (at or below it,
+// the subtree lies in the significance region) and
+// thr_lo[b'] = t - log D - minh[k+1][b'] (above it, the subtree
+// lies in the complement region and is bulk-subtracted).
 void run_sweep(SweepState& s, double eps_merge) {
   const int c1 = s.c1;
+  const int acap = s.acap;
   std::vector<std::vector<ClassEntry>> cur(c1 + 1), nxt(c1 + 1);
-  cur[0].push_back({0.0, 1.0});
+  std::vector<double> thr_hi(acap), thr_lo(acap), bulk_lm(acap);
+  std::vector<double> flog, F;
 
-  for (int k = 0; k < s.m; k++) {
-    const int rem = s.m - k;
+  // Root classification (the only class not born from a push).
+  {
+    const double mx = s.maxh[c1];
+    if (!std::isfinite(mx) ||
+        s.log_const + mx <= s.log_thresh) return;
+    if (s.log_const + s.minh[c1] > s.log_thresh) {
+      s.acc += std::exp(s.log_const
+                 + lchoose_lf(s, s.suffix_r[0], c1) - s.slf[0]);
+      return;
+    }
+    cur[0].push_back({0.0, 1.0});
+  }
+
+  for (int k = 0; k + 2 <= s.m; k++) {
+    const bool leaf = (k + 2 == s.m);
     bool any_next = false;
+
+    if (!leaf) {
+      // Per-child-state thresholds and bulk log-masses for stage
+      // k + 1, computed once per stage.
+      const double* mxn = &s.maxh[(size_t)(k + 1) * acap];
+      const double* mnn = &s.minh[(size_t)(k + 1) * acap];
+      const double off = s.log_thresh - s.log_const;
+      for (int b = 0; b <= std::min(c1, s.suffix_r[k + 1]); b++) {
+        thr_hi[b] = std::isfinite(mxn[b]) ? off - mxn[b] : INFINITY;
+        thr_lo[b] = std::isfinite(mnn[b]) ? off - mnn[b] : INFINITY;
+        bulk_lm[b] = s.log_const
+                   + lchoose_lf(s, s.suffix_r[k + 1], b)
+                   - s.slf[k + 1];
+      }
+    }
 
     for (int a = 0; a <= c1; a++) {
       std::vector<ClassEntry>& cl = cur[a];
       if (cl.empty()) continue;
       const int b = c1 - a;
-      if (b > s.suffix_r[k]) { cl.clear(); continue; }
-      const double mx = s.maxh[(size_t)k * s.acap + b];
-      if (!std::isfinite(mx)) { cl.clear(); continue; }
-      const double mn = s.minh[(size_t)k * s.acap + b];
 
       sort_merge(cl, eps_merge);
 
-      // Proposition 6I state-level leaf structures (rem == 2),
-      // built lazily on the first straddling class.
-      bool leaf_ready = false;
-      int y_lo_st = 0, y_hi_st = -1, ym = 0;
-      std::vector<double> flog, F;
-      int cur_lo = 0, cur_hi = -1;   // empty interval
+      if (!leaf) {
+        // Expand each straddling class; classify children at
+        // creation time.
+        const int y_lo = std::max(0, b - s.suffix_r[k + 1]);
+        const int y_hi = std::min(s.r[k], b);
+        for (const ClassEntry& e : cl) {
+          for (int y = y_lo; y <= y_hi; y++) {
+            const double q = e.q + h_term(s, k, y);
+            const int bc = b - y;
+            if (q <= thr_hi[bc]) continue;          // drop
+            if (q > thr_lo[bc]) {                   // bulk
+              s.acc += e.w * std::exp(q + bulk_lm[bc]);
+              continue;
+            }
+            nxt[a + y].push_back({q, e.w});
+            any_next = true;
+          }
+        }
+        cl.clear();
+        continue;
+      }
 
+      // Two rows remain: Proposition 6I. Leaf masses and prefix
+      // sums once per state; nested intervals by expanding two
+      // pointers over classes sorted ascending in q.
+      const int y_lo_st = std::max(0, b - s.r[k + 1]);
+      const int y_hi_st = std::min(s.r[k], b);
+      const int w = y_hi_st - y_lo_st + 1;
+      flog.resize(w);
+      F.assign(w + 1, 0.0);
+      for (int y = y_lo_st; y <= y_hi_st; y++) {
+        const double fl = h_term(s, k, y) + h_term(s, k + 1, b - y);
+        flog[y - y_lo_st] = fl;
+        F[y - y_lo_st + 1] = F[y - y_lo_st] + std::exp(fl);
+      }
+      const int ym = (int)(std::max_element(flog.begin(),
+                           flog.end()) - flog.begin());
+      int cur_lo = ym + 1, cur_hi = ym;   // empty
       for (const ClassEntry& e : cl) {
         const double base = s.log_const + e.q;
-
-        // 6D run 1: entirely in the significance region -> drop.
-        if (base + mx <= s.log_thresh) continue;
-
-        // 6D run 3: entirely in the complement region -> bulk.
-        if (base + mn > s.log_thresh) {
-          s.acc += e.w * std::exp(base
-                     + lchoose_lf(s, s.suffix_r[k], b) - s.slf[k]);
-          continue;
-        }
-
-        // Straddling.
-        if (rem >= 3) {
-          const int y_lo = std::max(0, b - s.suffix_r[k + 1]);
-          const int y_hi = std::min(s.r[k], b);
-          for (int y = y_lo; y <= y_hi; y++) {
-            nxt[a + y].push_back({e.q + h_term(s, k, y), e.w});
-          }
-          any_next = true;
-          continue;
-        }
-
-        // rem == 2: Proposition 6I. (rem == 1 cannot straddle:
-        // maxh == minh there, so one of the runs above caught it.)
-        if (!leaf_ready) {
-          y_lo_st = std::max(0, b - s.r[k + 1]);
-          y_hi_st = std::min(s.r[k], b);
-          const int w = y_hi_st - y_lo_st + 1;
-          flog.resize(w);
-          F.assign(w + 1, 0.0);
-          for (int y = y_lo_st; y <= y_hi_st; y++) {
-            const double fl = h_term(s, k, y)
-                            + h_term(s, k + 1, b - y);
-            flog[y - y_lo_st] = fl;
-            F[y - y_lo_st + 1] = F[y - y_lo_st] + std::exp(fl);
-          }
-          ym = (int)(std::max_element(flog.begin(), flog.end())
-                     - flog.begin());
-          cur_lo = ym + 1; cur_hi = ym;      // empty
-          leaf_ready = true;
-        }
-        // Classes are sorted ascending in q, so the per-class
-        // threshold c decreases and the qualifying interval only
-        // grows: expand the two pointers, never contract.
         const double c = s.log_thresh - base;
         if (cur_hi < cur_lo) {
           if (flog[ym] > c) { cur_lo = ym; cur_hi = ym; }
         }
         if (cur_hi >= cur_lo) {
           while (cur_lo > 0 && flog[cur_lo - 1] > c) cur_lo--;
-          while (cur_hi < (int)flog.size() - 1 &&
-                 flog[cur_hi + 1] > c) cur_hi++;
+          while (cur_hi < w - 1 && flog[cur_hi + 1] > c) cur_hi++;
           s.acc += e.w * std::exp(base)
                  * (F[cur_hi + 1] - F[cur_lo]);
         }
