@@ -1,7 +1,47 @@
-// tree_memo.c
-// Pure C99 port of tree_memo algorithm.
-// Open-addressing hash table with dynamically sized capacity.
-// Uses R_alloc for interrupt-safe memory management.
+// rx2_tree_memo.c
+// Pure C99 tree-traversal kernel for Fisher's exact test on m x 2
+// tables, redesigned around the c = 2 separability of the
+// objective (docs/tree_memo_efficiency_review_2026-08-04.md).
+//
+// Because the table has two columns, the log-probability separates
+// as log P(y) = log_const + sum_i h_i(y_i) with
+//   h_i(y) = -lfact[y] - lfact[r_i - y]
+// and each h_i strictly concave. Consequences used here:
+//
+//   1. Exact per-subtree bounds by dynamic programming. maxh[k][a]
+//      (resp. minh[k][a]) is the exact maximum (minimum) of
+//      sum_{i >= k} h_i(y_i) over completions with sum a. These
+//      replace the former find_max / find_min searches and their
+//      memoization hash tables; every bound query is one array
+//      read. The maximum row is Requena and Martin Ciudad (2006),
+//      Theorem 1, in dynamic-programming form.
+//
+//   2. Proven two-sided sibling cutoff. The child-attention value
+//      F(y) = h_k(y) + maxh[k+1][a - y] is a sum of two concave
+//      functions of y (concavity of the value function a -> maxh
+//      is standard for separable concave maximization), hence
+//      concave: the children whose subtrees are not entirely
+//      inside the acceptance region form a contiguous interval.
+//      The walk locates the peak of F by local ascent and stops in
+//      each direction at the first child with
+//      pref_lp + F(y) <= log_thresh. This is the c = 2 proof of
+//      the cascade that rx2_tree_s4.c conjectures (Requena and
+//      Martin Ciudad 2006, Theorem 2).
+//
+//   3. penult tail cutoff. At the next-to-last level the tested
+//      quantity is the exact one-dimensional hypergeometric pmf,
+//      which is unimodal, so the leaf walk stops in each direction
+//      at the first value not exceeding the threshold.
+//
+// All bound comparisons are performed in log space
+// (log_thresh = log p_obs + log1p(tol)); the subtraction of
+// complement mass remains in probability space via the conditional
+// hypergeometric factorization (the dhyper factors of a subtree's
+// completions sum to one, so the whole subtree's mass equals the
+// prefix product).
+//
+// Row sort ascending by margin and column flip to the smaller
+// first column are unchanged from the previous design.
 
 #include <R.h>
 #include <Rinternals.h>
@@ -10,283 +50,71 @@
 #include <string.h>
 
 #define MAX_ROWS 20
-#define FIND_MAX_STACK 4096
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-
-typedef struct {
-    int y[MAX_ROWS];
-} CacheEntry;
-
-typedef struct {
-    int key;
-    int occupied;
-    CacheEntry entry;
-} HashBucket;
 
 typedef struct {
     int m;
     int n;
     int r[MAX_ROWS];
     int c[2];
-    int key_mult;
-    int hash_cap;
     double tol;
     double log_const;
     double p_obs;
+    double log_thresh;
     int suffix_r[MAX_ROWS + 1];
     double *lfact;
+    double *maxh;   /* (m+1) x (c1+1), maxh[k*(c1+1) + a] */
+    double *minh;
+    int acap;       /* c1 + 1 */
     double pval;
-    double p_max;
-    double p_min;
-    int y_max[MAX_ROWS];
-    HashBucket *memo_max;
-    HashBucket *memo_min;
 } FisherState;
 
-static int cache_key(int k, int c1, int mult) {
-    return k * mult + c1;
+/* h_k(y) = -lfact[y] - lfact[r_k - y]; caller guarantees bounds. */
+static double h_term(const FisherState *s, int k, int y) {
+    return -s->lfact[y] - s->lfact[s->r[k] - y];
 }
 
-static int hash_index(int key, int cap) {
-    unsigned int h = (unsigned int)key;
-    h = ((h >> 16) ^ h) * 0x45d9f3b;
-    h = ((h >> 16) ^ h) * 0x45d9f3b;
-    h = (h >> 16) ^ h;
-    return (int)(h & (cap - 1));
+static double maxh_at(const FisherState *s, int k, int a) {
+    return s->maxh[k * s->acap + a];
+}
+static double minh_at(const FisherState *s, int k, int a) {
+    return s->minh[k * s->acap + a];
 }
 
-static CacheEntry *cache_lookup(HashBucket *table,
-                                  int key, int cap) {
-    int idx = hash_index(key, cap);
-    int i;
-    for (i = 0; i < cap; i++) {
-        int probe = (idx + i) & (cap - 1);
-        if (!table[probe].occupied)
-            return NULL;
-        if (table[probe].key == key)
-            return &table[probe].entry;
+/* Exact suffix extrema of sum h_i under a budget, by backward DP.
+ * maxh[m][0] = 0 and maxh[m][a>0] = -Inf; likewise minh with +Inf.
+ * Feasible budgets at level k are 0..min(c1, suffix_r[k]). */
+static void build_extrema(FisherState *s) {
+    int m = s->m, acap = s->acap;
+    int k, a, y;
+
+    for (a = 0; a < acap; a++) {
+        s->maxh[m * acap + a] = (a == 0) ? 0.0 : -INFINITY;
+        s->minh[m * acap + a] = (a == 0) ? 0.0 : INFINITY;
     }
-    return NULL;
-}
-
-static void cache_insert(HashBucket *table, int key,
-                          const int *y, int from, int to,
-                          int cap) {
-    int idx = hash_index(key, cap);
-    int i;
-    for (i = 0; i < cap; i++) {
-        int probe = (idx + i) & (cap - 1);
-        if (!table[probe].occupied ||
-            table[probe].key == key) {
-            table[probe].occupied = 1;
-            table[probe].key = key;
-            memcpy(table[probe].entry.y + from, y + from,
-                   (to - from) * sizeof(int));
-            return;
-        }
-    }
-}
-
-static double compute_prob(const int *y,
-                                const FisherState *s) {
-    double log_prob = s->log_const;
-    int i;
-    for (i = 0; i < s->m; i++) {
-        log_prob -= s->lfact[y[i]];
-        log_prob -= s->lfact[s->r[i] - y[i]];
-    }
-    return exp(log_prob);
-}
-
-static void joe_min_impl(int k, int descend,
-    int *r_avail, int c1, int n_rem, int *y,
-    FisherState *s,
-    double *local_min_p, int *local_min_y) {
-    int i;
-    if (k == s->m) {
-        for (i = 0; i < s->m; i++) {
-            if (r_avail[i] >= 0) y[i] = c1;
-        }
-        double prob = compute_prob(y, s);
-        if (prob < *local_min_p) {
-            *local_min_p = prob;
-            memcpy(local_min_y, y, s->m * sizeof(int));
-        }
-        return;
-    }
-
-    int r_avail_save[MAX_ROWS], y_save[MAX_ROWS];
-    memcpy(r_avail_save, r_avail, s->m * sizeof(int));
-    memcpy(y_save, y, s->m * sizeof(int));
-    int c1_save = c1, n_rem_save = n_rem;
-
-    int idx = 0, max_r = -1;
-    for (i = 0; i < s->m; i++) {
-        if (r_avail[i] > max_r) {
-            max_r = r_avail[i]; idx = i;
-        }
-    }
-
-    if (descend)
-        y[idx] = MIN(r_avail[idx], c1);
-    else
-        y[idx] = r_avail[idx] -
-                 MIN(r_avail[idx], n_rem - c1);
-
-    n_rem -= r_avail[idx];
-    r_avail[idx] = -1;
-    c1 -= y[idx];
-
-    joe_min_impl(k + 1, 1, r_avail, c1, n_rem, y,
-                     s, local_min_p, local_min_y);
-
-    if (descend) {
-        memcpy(r_avail, r_avail_save,
-               s->m * sizeof(int));
-        memcpy(y, y_save, s->m * sizeof(int));
-        joe_min_impl(k, 0, r_avail, c1_save,
-                         n_rem_save, y, s,
-                         local_min_p, local_min_y);
-    }
-}
-
-static void find_min(int c1, int *y, int k_start,
-                          FisherState *s) {
-    int key = cache_key(k_start, c1, s->key_mult);
-    int i;
-
-    CacheEntry *cached = cache_lookup(s->memo_min, key,
-                                        s->hash_cap);
-    if (cached) {
-        memcpy(y + k_start, cached->y + k_start,
-               (s->m - k_start) * sizeof(int));
-        s->p_min = compute_prob(y, s);
-        return;
-    }
-
-    int r_avail[MAX_ROWS];
-    int n_rem = 0;
-    for (i = 0; i < s->m; i++) {
-        if (i < k_start) r_avail[i] = -1;
-        else { r_avail[i] = s->r[i]; n_rem += s->r[i]; }
-    }
-
-    double local_min_p = 1e300;
-    int local_min_y[MAX_ROWS];
-    memcpy(local_min_y, y, s->m * sizeof(int));
-
-    joe_min_impl(k_start, 1, r_avail, c1, n_rem, y, s,
-                     &local_min_p, local_min_y);
-
-    s->p_min = local_min_p;
-    cache_insert(s->memo_min, key, local_min_y, k_start, s->m,
-                 s->hash_cap);
-}
-
-typedef struct {
-    int k, c1, n_rem;
-    int y[MAX_ROWS];
-    double log_p;
-} FindMaxEntry;
-
-static void find_max(int k_start, int c1,
-                          int *y, FisherState *s) {
-    int key = cache_key(k_start, c1, s->key_mult);
-
-    CacheEntry *cached = cache_lookup(s->memo_max, key,
-                                        s->hash_cap);
-    if (cached) {
-        memcpy(y + k_start, cached->y + k_start,
-               (s->m - k_start) * sizeof(int));
-        s->p_max = compute_prob(y, s);
-        memcpy(s->y_max, y, s->m * sizeof(int));
-        return;
-    }
-
-    int i;
-    int n_rem = s->suffix_r[k_start];
-    double local_max_p = 0;
-    int local_max_y[MAX_ROWS];
-    memcpy(local_max_y, y, s->m * sizeof(int));
-
-    double log_p_prefix = s->log_const;
-    for (i = 0; i < k_start; i++)
-        log_p_prefix -= s->lfact[y[i]]
-                      + s->lfact[s->r[i] - y[i]];
-
-    FindMaxEntry stack[FIND_MAX_STACK];
-    int sp = 0;
-
-    stack[sp].k = k_start;
-    stack[sp].c1 = c1;
-    stack[sp].n_rem = n_rem;
-    memcpy(stack[sp].y, y, s->m * sizeof(int));
-    stack[sp].log_p = log_p_prefix;
-    sp++;
-
-    while (sp > 0) {
-        sp--;
-        FindMaxEntry curr = stack[sp];
-        int k = curr.k;
-        int c1_rem = curr.c1;
-        int n_rem_curr = curr.n_rem;
-
-        if (k >= s->m) {
-            double prob = exp(curr.log_p);
-            if (prob > local_max_p) {
-                local_max_p = prob;
-                memcpy(local_max_y, curr.y,
-                       s->m * sizeof(int));
+    for (k = m - 1; k >= 0; k--) {
+        int amax = MIN(acap - 1, s->suffix_r[k]);
+        for (a = 0; a < acap; a++) {
+            double best_max = -INFINITY, best_min = INFINITY;
+            if (a <= amax) {
+                int y_lo = MAX(0, a - s->suffix_r[k + 1]);
+                int y_hi = MIN(s->r[k], a);
+                for (y = y_lo; y <= y_hi; y++) {
+                    double nx = s->maxh[(k + 1) * acap + (a - y)];
+                    double nn = s->minh[(k + 1) * acap + (a - y)];
+                    double h = h_term(s, k, y);
+                    if (isfinite(nx) && h + nx > best_max)
+                        best_max = h + nx;
+                    if (isfinite(nn) && h + nn < best_min)
+                        best_min = h + nn;
+                }
             }
-            continue;
-        }
-
-        int d_rem = s->m - k;
-        int denom = n_rem_curr + d_rem;
-        int y_lo, y_up;
-
-        if (denom == 0 || c1_rem == 0) {
-            y_lo = y_up = 0;
-        } else {
-            y_up = (int)floor(
-                (double)(s->r[k] + 1) *
-                (c1_rem + d_rem - 1) / denom);
-            y_lo = (int)ceil(
-                (double)(s->r[k] + 1) *
-                (c1_rem + 1) / denom) - 1;
-        }
-
-        int n_after = s->suffix_r[k + 1];
-        y_lo = MAX(y_lo, MAX(0, c1_rem - n_after));
-        y_up = MIN(y_up, MIN(s->r[k], c1_rem));
-
-        if (y_lo > y_up) continue;
-
-        int y_k;
-        for (y_k = y_lo; y_k <= y_up; y_k++) {
-            if (sp >= FIND_MAX_STACK)
-                Rf_error("find_max stack overflow "
-                         "(capacity %d)", FIND_MAX_STACK);
-            stack[sp].k = k + 1;
-            stack[sp].c1 = c1_rem - y_k;
-            stack[sp].n_rem = n_rem_curr - s->r[k];
-            memcpy(stack[sp].y, curr.y,
-                   s->m * sizeof(int));
-            stack[sp].y[k] = y_k;
-            stack[sp].log_p = curr.log_p
-                - s->lfact[y_k]
-                - s->lfact[s->r[k] - y_k];
-            sp++;
+            s->maxh[k * acap + a] = best_max;
+            s->minh[k * acap + a] = best_min;
         }
     }
-
-    s->p_max = local_max_p;
-    memcpy(s->y_max, local_max_y, s->m * sizeof(int));
-
-    cache_insert(s->memo_max, key, local_max_y,
-                 k_start, s->m, s->hash_cap);
 }
 
 /* Hypergeometric pmf. Parameter names deliberately avoid the CM
@@ -305,149 +133,173 @@ static double dhyper_lf(int x, int m_white, int n_black, int k_draw,
     return exp(lp);
 }
 
-static void penult(int c1, int n_rem,
-    double prob_prefix, FisherState *s) {
+/* Ratio steps for the dhyper recurrence along y -> y + 1. */
+static double hp_step_up(double hp, int prev, int c1, int c2, int rk) {
+    return hp * (double)(c1 - prev) * (double)(rk - prev) /
+           ((double)(prev + 1) * (double)(c2 - rk + prev + 1));
+}
+static double hp_step_down(double hp, int prev, int c1, int c2, int rk) {
+    return hp * (double)prev * (double)(c2 - rk + prev) /
+           ((double)(c1 - prev + 1) * (double)(rk - prev + 1));
+}
+
+/* Next-to-last level: y at level m-2 fixes the leaf. The tested
+ * quantity is prob_prefix times the exact 1-D hypergeometric pmf,
+ * unimodal in y, so the walk breaks at the first value at or below
+ * the threshold in each direction. */
+static void penult(int a, int n_rem, double prob_prefix,
+                   FisherState *s) {
     int k = s->m - 2;
-    int y_lo = MAX(0, c1 - s->r[s->m - 1]);
-    int y_hi = MIN(s->r[k], c1);
+    int y_lo = MAX(0, a - s->r[s->m - 1]);
+    int y_hi = MIN(s->r[k], a);
     if (y_lo > y_hi) return;
 
-    int c2 = n_rem - c1;
+    int c2 = n_rem - a;
     double thresh = s->p_obs * (1 + s->tol);
 
-    int mode_k = s->y_max[k];
+    /* Locate the pmf mode by the closed form, clamped, then refined
+     * by local ascent (guards the floor formula's edge cases). */
+    int mode_k = (int)((double)(s->r[k] + 1) * (a + 1) /
+                       (n_rem + 2));
     if (mode_k < y_lo) mode_k = y_lo;
     if (mode_k > y_hi) mode_k = y_hi;
+    double hp_mode = dhyper_lf(mode_k, a, c2, s->r[k], s->lfact);
+    while (mode_k < y_hi) {
+        double up = dhyper_lf(mode_k + 1, a, c2, s->r[k], s->lfact);
+        if (up <= hp_mode) break;
+        mode_k++; hp_mode = up;
+    }
+    while (mode_k > y_lo) {
+        double dn = dhyper_lf(mode_k - 1, a, c2, s->r[k], s->lfact);
+        if (dn <= hp_mode) break;
+        mode_k--; hp_mode = dn;
+    }
 
-    double hp_mode = dhyper_lf(mode_k, c1, c2,
-                                 s->r[k], s->lfact);
     double prob = prob_prefix * hp_mode;
     if (prob > thresh)
         s->pval -= prob;
+    else
+        return;              /* peak fails: nothing qualifies */
 
-    int prev_yk;
+    int prev, y_k;
     double hp;
-    int y_k;
 
-    prev_yk = mode_k;
-    hp = hp_mode;
+    prev = mode_k; hp = hp_mode;
     for (y_k = mode_k + 1; y_k <= y_hi; y_k++) {
-        hp *= (double)(c1 - prev_yk) *
-              (double)(s->r[k] - prev_yk) /
-              ((double)(prev_yk + 1) *
-               (double)(c2 - s->r[k] + prev_yk + 1));
-        prev_yk = y_k;
+        hp = hp_step_up(hp, prev, a, c2, s->r[k]);
+        prev = y_k;
         prob = prob_prefix * hp;
-        if (prob > thresh)
-            s->pval -= prob;
+        if (prob > thresh) s->pval -= prob;
+        else break;          /* unimodal: all further fail */
     }
-
-    prev_yk = mode_k;
-    hp = hp_mode;
+    prev = mode_k; hp = hp_mode;
     for (y_k = mode_k - 1; y_k >= y_lo; y_k--) {
-        hp *= (double)prev_yk *
-              (double)(c2 - s->r[k] + prev_yk) /
-              ((double)(c1 - prev_yk + 1) *
-               (double)(s->r[k] - prev_yk + 1));
-        prev_yk = y_k;
+        hp = hp_step_down(hp, prev, a, c2, s->r[k]);
+        prev = y_k;
         prob = prob_prefix * hp;
-        if (prob > thresh)
-            s->pval -= prob;
+        if (prob > thresh) s->pval -= prob;
+        else break;
     }
 }
 
-static void traverse(int k, int c1, int *y,
-    double prob_prefix, int n_rem, int descend,
-    int y_k, int dir, int mode, FisherState *s) {
-
-    double hp = 0.0;
-    int prev_yk = -1;
-    int need_full = 1;
-
-    for (;;) {
-        if (k >= s->m - 1) {
-            if (k == s->m - 1) {
-                y[s->m - 1] = c1;
-                double hp_last = dhyper_lf(
-                    c1, c1, n_rem - c1,
-                    s->r[s->m - 1], s->lfact);
-                double prob = prob_prefix * hp_last;
-                if (prob > s->p_obs * (1 + s->tol))
-                    s->pval -= prob;
-            }
-            return;
-        }
-
-        int y_lo = MAX(0, c1 - s->suffix_r[k + 1]);
-        int y_hi = MIN(s->r[k], c1);
-
-        if (descend) {
-            mode = s->y_max[k]; y_k = mode;
-            need_full = 1;
-        }
-        if (y_k < y_lo) return;
-        if (y_k > y_hi) {
-            y_k = mode - 1; dir = -1;
-            descend = 0;
-            need_full = 1;
-            continue;
-        }
-
-        y[k] = y_k;
-        int c2 = n_rem - c1;
-        if (need_full) {
-            hp = dhyper_lf(y_k, c1, c2,
-                            s->r[k], s->lfact);
-            need_full = 0;
-        } else if (dir == +1) {
-            hp *= (double)(c1 - prev_yk) *
-                  (double)(s->r[k] - prev_yk) /
-                  ((double)(prev_yk + 1) *
-                   (double)(c2 - s->r[k] + prev_yk + 1));
-        } else {
-            hp *= (double)prev_yk *
-                  (double)(c2 - s->r[k] + prev_yk) /
-                  ((double)(c1 - prev_yk + 1) *
-                   (double)(s->r[k] - prev_yk + 1));
-        }
-        prev_yk = y_k;
-
-        double new_prefix = prob_prefix * hp;
-        int new_c1 = c1 - y_k;
-        int new_n_rem = s->suffix_r[k + 1];
-
-        if (s->m - k > 2) {
-            s->p_max = 0;
-            find_max(k + 1, new_c1, y, s);
-            if (s->p_max <= s->p_obs * (1 + s->tol)) {
-                y_k += dir; descend = 0;
-                continue;
-            }
-            s->p_min = 1;
-            find_min(new_c1, y, k + 1, s);
-            if (s->p_min > s->p_obs * (1 + s->tol)) {
-                s->pval -= new_prefix;
-                y_k += dir; descend = 0;
-                continue;
-            }
-        }
-
-        if (k == s->m - 3) {
-            penult(new_c1, new_n_rem, new_prefix, s);
-        } else {
-            traverse(k + 1, new_c1, y, new_prefix,
-                         new_n_rem, 1, 0, +1, 0, s);
-        }
-        y_k += dir; descend = 0;
-    }
+/* pref_lp + F(y) with F(y) = h_k(y) + maxh[k+1][a - y]; -Inf when
+ * the child is infeasible. */
+static double child_max_lp(const FisherState *s, int k, int a,
+                           double pref_lp, int y) {
+    double nx = maxh_at(s, k + 1, a - y);
+    if (!isfinite(nx)) return -INFINITY;
+    return pref_lp + h_term(s, k, y) + nx;
 }
 
-static int next_power_of_two(int v) {
-    v--;
-    v |= v >> 1; v |= v >> 2;
-    v |= v >> 4; v |= v >> 8;
-    v |= v >> 16;
-    return v + 1;
+static void traverse(int k, int a, double prob_prefix,
+                     double pref_lp, int n_rem, FisherState *s);
+
+/* Handle one child: bulk-subtract if its subtree lies entirely in
+ * the complement, otherwise descend. The caller has already
+ * established that the child is not entirely in the acceptance
+ * region. */
+static void handle_child(int k, int a, int y_k, double hp,
+                         double prob_prefix, double pref_lp,
+                         FisherState *s) {
+    double new_prefix = prob_prefix * hp;
+    int new_a = a - y_k;
+    double nn = minh_at(s, k + 1, new_a);
+    if (isfinite(nn) &&
+        pref_lp + h_term(s, k, y_k) + nn > s->log_thresh) {
+        s->pval -= new_prefix;   /* whole subtree in complement */
+        return;
+    }
+    double new_pref_lp = pref_lp + h_term(s, k, y_k);
+    if (k == s->m - 3)
+        penult(new_a, s->suffix_r[k + 1], new_prefix, s);
+    else
+        traverse(k + 1, new_a, new_prefix, new_pref_lp,
+                 s->suffix_r[k + 1], s);
+}
+
+static void traverse(int k, int a, double prob_prefix,
+                     double pref_lp, int n_rem, FisherState *s) {
+    if (k >= s->m - 1) {
+        if (k == s->m - 1) {
+            double hp_last = dhyper_lf(a, a, n_rem - a,
+                                       s->r[s->m - 1], s->lfact);
+            double prob = prob_prefix * hp_last;
+            if (prob > s->p_obs * (1 + s->tol))
+                s->pval -= prob;
+        }
+        return;
+    }
+
+    int y_lo = MAX(0, a - s->suffix_r[k + 1]);
+    int y_hi = MIN(s->r[k], a);
+    if (y_lo > y_hi) return;
+
+    /* Locate the peak of the concave attention value F by local
+     * ascent from the 1-D mode guess. */
+    int y_pk = (int)((double)(s->r[k] + 1) * (a + 1) / (n_rem + 2));
+    if (y_pk < y_lo) y_pk = y_lo;
+    if (y_pk > y_hi) y_pk = y_hi;
+    {
+        double f = child_max_lp(s, k, a, pref_lp, y_pk);
+        while (y_pk < y_hi) {
+            double up = child_max_lp(s, k, a, pref_lp, y_pk + 1);
+            if (up <= f) break;
+            y_pk++; f = up;
+        }
+        while (y_pk > y_lo) {
+            double dn = child_max_lp(s, k, a, pref_lp, y_pk - 1);
+            if (dn <= f) break;
+            y_pk--; f = dn;
+        }
+        if (f <= s->log_thresh)
+            return;   /* peak in acceptance region: all children are */
+    }
+
+    int c2 = n_rem - a;
+    int prev, y_k;
+    double hp;
+
+    /* Upward from the peak; concavity of F licenses the break. */
+    hp = dhyper_lf(y_pk, a, c2, s->r[k], s->lfact);
+    handle_child(k, a, y_pk, hp, prob_prefix, pref_lp, s);
+    prev = y_pk;
+    for (y_k = y_pk + 1; y_k <= y_hi; y_k++) {
+        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh)
+            break;
+        hp = hp_step_up(hp, prev, a, c2, s->r[k]);
+        prev = y_k;
+        handle_child(k, a, y_k, hp, prob_prefix, pref_lp, s);
+    }
+    /* Downward from the peak. */
+    hp = dhyper_lf(y_pk, a, c2, s->r[k], s->lfact);
+    prev = y_pk;
+    for (y_k = y_pk - 1; y_k >= y_lo; y_k--) {
+        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh)
+            break;
+        hp = hp_step_down(hp, prev, a, c2, s->r[k]);
+        prev = y_k;
+        handle_child(k, a, y_k, hp, prob_prefix, pref_lp, s);
+    }
 }
 
 double rx2_tree_memo_c_impl(int *dat, int m) {
@@ -477,23 +329,16 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
         s.c[1] = tmp;
     }
 
-    s.key_mult = s.c[0] + 1;
-    size_t n_states = (size_t)(m + 1) * (size_t)s.key_mult;
-    if (n_states > (size_t)INT_MAX / 2)
-        Rf_error("Table too large for hash table "
-                 "(n_states = %zu)", n_states);
-    s.hash_cap = next_power_of_two(
-        (int)(n_states < 64 ? 64 : 2 * n_states));
+    s.acap = s.c[0] + 1;
+    if ((size_t)(m + 1) * (size_t)s.acap >
+        (size_t)INT_MAX / (2 * sizeof(double)))
+        Rf_error("Table too large for bound arrays");
 
     s.lfact = (double *)R_alloc(s.n + 1, sizeof(double));
-    s.memo_max = (HashBucket *)R_alloc(s.hash_cap,
-        sizeof(HashBucket));
-    s.memo_min = (HashBucket *)R_alloc(s.hash_cap,
-        sizeof(HashBucket));
-    memset(s.memo_max, 0,
-           s.hash_cap * sizeof(HashBucket));
-    memset(s.memo_min, 0,
-           s.hash_cap * sizeof(HashBucket));
+    s.maxh = (double *)R_alloc((size_t)(m + 1) * s.acap,
+                               sizeof(double));
+    s.minh = (double *)R_alloc((size_t)(m + 1) * s.acap,
+                               sizeof(double));
 
     int order[MAX_ROWS];
     for (i = 0; i < m; i++) order[i] = i;
@@ -538,14 +383,15 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
         log_p_obs -= s.lfact[s.r[i] - y_obs[i]];
     }
     s.p_obs = exp(log_p_obs);
+    s.log_thresh = log_p_obs + log1p(s.tol);
 
-    for (i = 0; i < m; i++) s.y_max[i] = 0;
-    s.p_max = 0;
-    s.p_min = 1;
+    build_extrema(&s);
 
-    find_max(0, s.c[0], y_obs, &s);
-    traverse(0, s.c[0], y_obs, 1.0, s.n,
-                 1, 0, +1, 0, &s);
+    if (m == 2) {
+        penult(s.c[0], s.n, 1.0, &s);
+    } else {
+        traverse(0, s.c[0], 1.0, s.log_const, s.n, &s);
+    }
 
     return s.pval;
 }

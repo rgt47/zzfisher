@@ -43,7 +43,10 @@ struct RxcState {
   std::vector<int> y;                // current table, m*c ints, row-major
   double log_const;                  // log(prod r_i! prod c_j! / n!)
   double p_obs;
+  double log_thresh;                 // log(p_obs * (1 + tol))
   double pval;                       // antipvalue, starts at 1
+  std::vector<double> lf;            // lf[v] = log(v!)
+  long n_skipped;                    // subtrees skipped by the bound
 };
 
 inline int yidx(const RxcState& s, int i, int j) { return i * s.c + j; }
@@ -52,6 +55,59 @@ inline double table_p(const RxcState& s) {
   double sum = 0.0;
   for (int v : s.y) sum += std::lgamma(v + 1);
   return std::exp(s.log_const - sum);
+}
+
+// --- Acceptance-region skip via a balanced-split relaxation ------
+//
+// The m x 2 kernel prunes with exact subtree extrema, which exist
+// there because two columns make log Pr separable into concave
+// one-dimensional terms. That separability is unavailable for
+// c >= 3: the cells of a partial table are tied by both row and
+// column constraints simultaneously.
+//
+// What does transfer is a relaxation. For q free cells summing to
+// s, dropping all constraints except the total gives
+//
+//   max { -sum_t log(y_t!) : sum y_t = s, y_t >= 0 }
+//     = -(q - rho) * log(floor(s/q)!) - rho * log(ceil(s/q)!),
+//     rho = s mod q,
+//
+// attained at the balanced split (proof: -log(y!) is concave, so
+// moving a unit from a cell exceeding another by two or more
+// strictly increases the objective; hence maxima have all cells
+// within one of each other). Relaxing constraints only enlarges
+// the feasible set, so applying this per remaining column yields a
+// valid upper bound on the log-probability of every completion.
+// When that bound does not exceed log(Pr_obs * (1 + tol)), the
+// entire subtree lies in the acceptance region and contributes
+// nothing to the antipvalue, so it may be skipped exactly.
+//
+// Unlike the m x 2 case the bound is not the true extremum, so no
+// interval structure over siblings is claimed and no scan cutoff
+// is applied. The complement side has no analogue at all: bulk
+// subtraction there needs a subtree's total mass, which for c = 2
+// is Vandermonde's convolution but for c >= 3 has no closed form.
+// See docs/c2_separability_whitepaper_2026-08-04.md, Section 5.
+inline double balanced_split_lp(const RxcState& s, int q, int total) {
+  if (q <= 0) return (total == 0) ? 0.0 : -INFINITY;
+  const int base = total / q, rem = total % q;
+  return -((double)(q - rem) * s.lf[base] +
+           (double)rem * s.lf[base + 1]);
+}
+
+// Upper bound on log Pr over all completions of the current state,
+// given the log-mass already committed to placed and determined
+// cells. Column j has (m - 1 - i) free cells left in this pass
+// plus its determined last-row cell, which the relaxation absorbs
+// by treating the column residual as spread over m - i cells;
+// later columns are unconstrained apart from their margins.
+double completion_upper_lp(const RxcState& s, int i, int j,
+                           double placed_lp) {
+  double bound = placed_lp;
+  bound += balanced_split_lp(s, s.m - i, s.cresid[j]);
+  for (int jj = j + 1; jj < s.c; ++jj)
+    bound += balanced_split_lp(s, s.m, s.cresid[jj]);
+  return s.log_const + bound;
 }
 
 // After path traversal completes, fill last column and last row from
@@ -89,7 +145,7 @@ bool finish_table(RxcState& s) {
   return true;
 }
 
-void traverse(int t, int tmax, RxcState& s) {
+void traverse(int t, int tmax, RxcState& s, double placed_lp) {
   if (t > tmax) {
     if (!finish_table(s)) return;
     double p = table_p(s);
@@ -100,6 +156,13 @@ void traverse(int t, int tmax, RxcState& s) {
   const int tt = t - 1;
   const int i = tt % (s.m - 1);
   const int j = tt / (s.m - 1);
+
+  // Acceptance-region skip: if no completion can exceed the
+  // threshold, the whole subtree contributes nothing.
+  if (completion_upper_lp(s, i, j, placed_lp) <= s.log_thresh) {
+    ++s.n_skipped;
+    return;
+  }
 
   // Lower bound: row i residual must be absorbable by remaining-cols
   // capacity (cols j+1..c-1), so x >= rresid - sum of those cresid.
@@ -112,7 +175,7 @@ void traverse(int t, int tmax, RxcState& s) {
     s.y[yidx(s, i, j)] = x;
     s.rresid[i] -= x;
     s.cresid[j] -= x;
-    traverse(t + 1, tmax, s);
+    traverse(t + 1, tmax, s, placed_lp - s.lf[x]);
     s.rresid[i] += x;
     s.cresid[j] += x;
   }
@@ -157,9 +220,17 @@ double rxc_tree_memo_cpp(IntegerMatrix dat) {
   s.rresid = s.rmarg;
   s.cresid = s.cmarg;
   s.pval = 1.0;
+  s.n_skipped = 0;
+  s.log_thresh = std::log(s.p_obs) + std::log1p(RXC_TOL);
+
+  // Log-factorial table, sized to the grand total (no cell exceeds
+  // it), so the balanced-split bound is a table lookup.
+  s.lf.assign(s.n + 2, 0.0);
+  for (int v = 1; v <= s.n + 1; ++v)
+    s.lf[v] = s.lf[v - 1] + std::log((double)v);
 
   const int tmax = (s.m - 1) * (s.c - 1);
-  traverse(1, tmax, s);
+  traverse(1, tmax, s, 0.0);
 
   // Numeric guard: pval should be in (0, 1]. Clamp to handle round-off
   // around the boundary cases.
