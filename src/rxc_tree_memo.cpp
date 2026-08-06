@@ -79,7 +79,7 @@ inline double table_p(const RxcState& s) {
 // the feasible set, so applying this per remaining column yields a
 // valid upper bound on the log-probability of every completion.
 // When that bound does not exceed log(Pr_obs * (1 + tol)), the
-// entire subtree lies in the acceptance region and contributes
+// entire subtree lies in the significance region S and contributes
 // nothing to the antipvalue, so it may be skipped exactly.
 //
 // Unlike the m x 2 case the bound is not the true extremum, so no

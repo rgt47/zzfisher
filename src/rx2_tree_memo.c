@@ -21,7 +21,10 @@
 //      functions of y (concavity of the value function a -> maxh
 //      is standard for separable concave maximization), hence
 //      concave: the children whose subtrees are not entirely
-//      inside the acceptance region form a contiguous interval.
+//      inside the significance region S = {P <= P_obs} form a
+//      contiguous interval (equivalently: the children whose
+//      subtrees meet the complement region U = {P > P_obs},
+//      which is convex, form the shadow of a convex set).
 //      The walk locates the peak of F by local ascent and stops in
 //      each direction at the first child with
 //      pref_lp + F(y) <= log_thresh. This is the c = 2 proof of
@@ -272,7 +275,7 @@ static void traverse(int k, int a, double prob_prefix,
             y_pk--; f = dn;
         }
         if (f <= s->log_thresh)
-            return;   /* peak in acceptance region: all children are */
+            return;   /* peak fails: every child is in S */
     }
 
     int c2 = n_rem - a;
