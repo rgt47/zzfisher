@@ -17,10 +17,10 @@
   This is the Mehta-Patel-Joe-Clarkson-Requena algorithm
   specialized to two columns. Unlike FEXACT it has no fixed
   workspace: storage grows with the live class count.
-* Verified against `fisher.test()` over 348 random tables (m = 2
-  to 10, including tied margins, degenerate tables, and the
-  large-m regime that forces FEXACT workspace growth): max
-  discrepancy 8.0e-14.
+* Verified against `fisher.test()` over 402 random tables (m = 2
+  to 10, including tied margins up to the m = 8, rho = 10 regime,
+  degenerate tables, and the large-m regime that forces FEXACT
+  workspace growth): max absolute discrepancy 8.0e-14.
 
 # zzfisher 0.3.0
 
