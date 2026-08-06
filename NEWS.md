@@ -1,20 +1,32 @@
 # zzfisher 0.4.0
 
+* Measurement-validity note: all pre-0.4.0 benchmark claims were
+  taken on pkgload::load_all() builds, which compile with debug
+  flags (-O0 -UNDEBUG) and slowed these kernels up to 16x against
+  R's optimized libraries. Every figure below is from an
+  R CMD INSTALL (-O2) build.
 * Sweep constant-factor pass: children of a straddling class are
   classified at creation against per-stage threshold arrays, so
   dropped and bulk-subtracted children never enter the stage
-  buffers and no stage-entry classification pass exists. Roughly
-  doubles throughput at the heavy cells; on the 36-cell
-  wrapper-stripped grid the sweep now beats raw FEXACT in 22 of
-  36 cells (median cell ratio 1.30).
+  buffers and no stage-entry classification pass exists. On the
+  36-cell wrapper-stripped grid the sweep beats raw FEXACT in all
+  36 cells: median cell ratio 9.0, from 18x on small tables down
+  to 1.6-2.0x at the heaviest (m = 8, rho = 10).
 * r x c kernel: the balanced-split skip is upgraded to capped
   water-filling for the current column (the Joe-style
   exact-relaxation bound, respecting row residuals) with a
   concavity-based sibling cutoff (the r x c analog of the m x 2
   cascade). Verified to 7.5e-13 against fisher.test over 170
-  random tables; 17 percent faster on a fixed seeded set, with
-  dense cells gaining up to 1.9x and the sparsest cell regressing
-  14 percent.
+  random tables; 3.7x faster overall on a fixed seeded set, with
+  every cell gaining (2.9x to 10.2x).
+* r x c x k kernel: determine-as-you-go restructure (a layer's
+  dependent cells are computed, checked, and charged to the AB
+  margins at the layer boundary; running prefix statistic over a
+  log-factorial table replaces the per-leaf O(mck) lgamma sweep).
+  Bit-identical to the predecessor over 90 random arrays and
+  performance-neutral (0.96-1.01): the ratio-form p-value admits
+  no valid skip, and placement bounding already keeps prefixes
+  near-feasible. Documented as a measured negative result.
 * New kernel `net_sweep_cpp`: a state-sweep (network) algorithm for
   m x 2 tables, per Sections 3B and 3B.1 of the project white paper
   `c2_separability_whitepaper_2026-08-04`. The sweep proceeds stage
