@@ -33,8 +33,16 @@
     .Call(`_zzfisher_rx2_tree_s4_c`, dat)
 }
 
+.rxc_net_sweep_cpp <- function(dat_in) {
+    .Call(`_zzfisher_rxc_net_sweep_cpp`, dat_in)
+}
+
 .rxc_tree_memo_cpp <- function(dat) {
     .Call(`_zzfisher_rxc_tree_memo_cpp`, dat)
+}
+
+.rxck_net_ci_cpp <- function(dat) {
+    .Call(`_zzfisher_rxck_net_ci_cpp`, dat)
 }
 
 .rxck_tree_memo_cpp <- function(dat) {

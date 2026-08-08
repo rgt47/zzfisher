@@ -188,10 +188,35 @@ net_sweep_cpp <- function(dat) {
   dname <- deparse(substitute(dat))
   pval <- switch(.infer_shape(dat),
     rx2  = .rx2_net_sweep_cpp(dat),
-    rxc  = .rxc_tree_memo_cpp(dat),
+    rxc  = .rxc_net_sweep_cpp(dat),
     rxck = .rxck_tree_memo_cpp(dat)
   )
   make_htest(pval, dname, '[net_sweep_cpp]')
+}
+
+#' Stratified conditional-independence exact test (C++)
+#'
+#' Exact test that rows are independent of columns given the
+#' layer (log-linear \code{[AC][BC]}) in an r x c x k array: the
+#' stratified Fisher's exact test. Conditioning on each stratum's
+#' margins makes the null law a product of independent r x c
+#' hypergeometrics; the kernel convolves per-stratum
+#' log-probability distributions with exact suffix extrema and
+#' three-case classification. With \code{k = 1} the test reduces
+#' to the ordinary r x c Fisher exact test. This is a different
+#' hypothesis from the no-three-way-interaction test computed by
+#' the \code{rxck} arms of the other dispatchers.
+#'
+#' @param dat 3D integer array (r x c x k contingency table).
+#' @return An htest object.
+#' @export
+net_ci_cpp <- function(dat) {
+  dname <- deparse(substitute(dat))
+  if (length(dim(dat)) != 3) {
+    stop('net_ci_cpp requires a 3-dimensional array')
+  }
+  pval <- .rxck_net_ci_cpp(dat)
+  make_htest(pval, dname, '[net_ci_cpp]')
 }
 
 # tree_memo_profile returns a list with $pvalue and profiling fields.

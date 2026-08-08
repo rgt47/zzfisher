@@ -1,5 +1,27 @@
 # zzfisher 0.4.0
 
+* Fused state-aggregation kernel for r x c tables
+  (`net_sweep_cpp`'s rxc arm now routes to it): Mehta-Patel
+  network states (column-residual vectors, table transposed so
+  the state dimension is the smaller side), EXACT completion
+  extrema by backward induction with dense mixed-radix keys (the
+  1980 device, vector states), hashed class merge, three-case
+  classification with child-creation filtering, closed-form bulk
+  disposal via the multinomial Vandermonde, and permutation
+  collapsing of tied-margin states with hybrid arc handling (CSR
+  storage with ties, on-the-fly enumeration without). Verified
+  to 7.6e-14 over the r x c oracle gate; completes all six
+  Mehta-Patel (1983) Table 1 problems, two of which are
+  infeasible for the tree kernel.
+* New test and kernel `net_ci_cpp`: stratified
+  conditional-independence exact test for r x c x k arrays (rows
+  independent of columns given the layer, log-linear [AC][BC];
+  the stratified Fisher's exact test). Per-stratum
+  log-probability distributions convolved across strata with
+  exact suffix extrema and O(1) bulk moves; k = 1 reduces to the
+  ordinary r x c Fisher test, checked against fisher.test in the
+  test suite alongside brute-force 2 x 2 x k oracles.
+
 * Measurement-validity note: all pre-0.4.0 benchmark claims were
   taken on pkgload::load_all() builds, which compile with debug
   flags (-O0 -UNDEBUG) and slowed these kernels up to 16x against

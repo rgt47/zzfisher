@@ -99,6 +99,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rxc_net_sweep_cpp
+double rxc_net_sweep_cpp(IntegerMatrix dat_in);
+RcppExport SEXP _zzfisher_rxc_net_sweep_cpp(SEXP dat_inSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerMatrix >::type dat_in(dat_inSEXP);
+    rcpp_result_gen = Rcpp::wrap(rxc_net_sweep_cpp(dat_in));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rxc_tree_memo_cpp
 double rxc_tree_memo_cpp(IntegerMatrix dat);
 RcppExport SEXP _zzfisher_rxc_tree_memo_cpp(SEXP datSEXP) {
@@ -107,6 +118,17 @@ BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerMatrix >::type dat(datSEXP);
     rcpp_result_gen = Rcpp::wrap(rxc_tree_memo_cpp(dat));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rxck_net_ci_cpp
+double rxck_net_ci_cpp(IntegerVector dat);
+RcppExport SEXP _zzfisher_rxck_net_ci_cpp(SEXP datSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type dat(datSEXP);
+    rcpp_result_gen = Rcpp::wrap(rxck_net_ci_cpp(dat));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -131,7 +153,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_zzfisher_rx2_tree_memo_cpp", (DL_FUNC) &_zzfisher_rx2_tree_memo_cpp, 1},
     {"_zzfisher_rx2_tree_memo_profile", (DL_FUNC) &_zzfisher_rx2_tree_memo_profile, 1},
     {"_zzfisher_rx2_tree_s4_c", (DL_FUNC) &_zzfisher_rx2_tree_s4_c, 1},
+    {"_zzfisher_rxc_net_sweep_cpp", (DL_FUNC) &_zzfisher_rxc_net_sweep_cpp, 1},
     {"_zzfisher_rxc_tree_memo_cpp", (DL_FUNC) &_zzfisher_rxc_tree_memo_cpp, 1},
+    {"_zzfisher_rxck_net_ci_cpp", (DL_FUNC) &_zzfisher_rxck_net_ci_cpp, 1},
     {"_zzfisher_rxck_tree_memo_cpp", (DL_FUNC) &_zzfisher_rxck_tree_memo_cpp, 1},
     {NULL, NULL, 0}
 };
