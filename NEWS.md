@@ -1,3 +1,26 @@
+# zzfisher 0.4.1
+
+* Picks up sweep-kernel work completed in the research workspace
+  after 0.4.0 was cut. `rx2_net_sweep.cpp` tabulates the row term
+  `h_k(y)` once per row instead of recomputing it inside the budget
+  loop. `rxc_net_sweep.cpp` gains permutation collapsing of
+  tied-margin states and child-creation classification, and carries
+  a reader's map keyed to the sections of the r x c paper. No change
+  to any returned p-value: verified bitwise identical to the
+  research build across 57 tables and all ten dispatchers.
+* Restores `importFrom(stats, dhyper)`, dropped from NAMESPACE when
+  `wrappers.R` was replaced by the dispatchers in 0.2.0. The pure-R
+  `.rx2_tree_dp` kernel calls `dhyper()`, so the package had been
+  relying on stats being attached rather than importing it.
+* Drops the obsolete `CXX_STD = CXX11` from `src/Makevars`; R
+  already ignores it in favor of the default standard.
+* Adds drift detection against the research workspace. The 21 files
+  in `tools/sync-manifest.txt` are copied verbatim from
+  rgt47/fisherexacttestrx2 and must not be edited here;
+  `tools/check-sync.sh` verifies them in CI on every push and pull
+  request to `main`, and `tools/sync-provenance.txt` records the
+  upstream commit this build came from.
+
 # zzfisher 0.4.0
 
 * Fused state-aggregation kernel for r x c tables

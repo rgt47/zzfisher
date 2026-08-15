@@ -12,6 +12,9 @@
 ^\.dockerignore$
 ^zzcollab\.yaml$
 ^\.zzcollab$
+^\.zzcollab-state$
+^tooling\.lock$
+^tools$
 ^CLAUDE\.md$
 ^README\.md$
 ^vignettes$

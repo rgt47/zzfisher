@@ -1,0 +1,35 @@
+# Files shared verbatim between the research workspace
+# (rgt47/fisherexacttestrx2) and the released package (rgt47/zzfisher).
+#
+# The research workspace is authoritative. Edit these files there,
+# then run tools/sync-to-zzfisher.sh to export them.
+#
+# Everything NOT listed here is either generated (RcppExports,
+# NAMESPACE, man/) or belongs to exactly one repository (DESCRIPTION,
+# README, NEWS, archive/, analysis/, docs/). Do not add such files.
+#
+# Blank lines and lines beginning with '#' are ignored.
+
+R/dispatch.R
+R/htest_wrap.R
+R/rx2_tree_dp.R
+R/rx2_tree_memo.R
+
+src/Makevars
+src/rx2_net_dp.cpp
+src/rx2_net_sweep.cpp
+src/rx2_net_vander.cpp
+src/rx2_tree_dp.cpp
+src/rx2_tree_memo.c
+src/rx2_tree_memo_c_wrapper.cpp
+src/rx2_tree_memo_cpp.cpp
+src/rx2_tree_s4.c
+src/rx2_tree_s4_wrapper.cpp
+src/rxc_net_sweep.cpp
+src/rxc_tree_memo.cpp
+src/rxck_net_ci.cpp
+src/rxck_tree_memo.cpp
+
+inst/tinytest/test_basic.R
+inst/tinytest/test_ci.R
+inst/tinytest/test_htest.R

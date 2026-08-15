@@ -1,0 +1,26 @@
+name: sync-check
+
+# Fails when this repository's copy of the shared kernel sources no
+# longer matches tools/sync-checksums.sha256. The same workflow runs
+# in rgt47/fisherexacttestrx2; each repository verifies only its own
+# files, so no cross-repository checkout or token is needed.
+#
+# This package is a downstream export. A failure here means a kernel
+# was edited in the package rather than upstream: move the change to
+# the research workspace, run tools/sync-to-zzfisher.sh there, and
+# commit the regenerated checksums in both repositories.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify shared kernel sources match the sync manifest
+        run: bash tools/check-sync.sh

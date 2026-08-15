@@ -59,6 +59,7 @@ tree_memo <- function(dat) {
 #' @param dat Integer matrix (r x 2 or r x c contingency table) or
 #'   3D integer array (r x c x k).
 #' @return An htest object matching \code{fisher.test()} output.
+#' @importFrom stats dhyper
 #' @export
 tree_dp <- function(dat) {
   dname <- deparse(substitute(dat))

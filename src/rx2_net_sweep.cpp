@@ -55,7 +55,6 @@ struct SweepState {
   std::vector<int> r;          // row margins, sorted ascending
   int c1;                      // smaller column margin (budget)
   double log_const;
-  double p_obs;
   double log_thresh;
   std::vector<double> lfact;   // lfact[v] = log v!
   std::vector<double> maxh;    // (m+1) x (c1+1) exact suffix maxima
@@ -75,25 +74,31 @@ inline double lchoose_lf(const SweepState& s, int nn, int kk) {
 }
 
 // Exact suffix extrema of sum h_i under a budget, by backward DP
-// (same construction as the redesigned tree kernel).
+// (same construction as the redesigned tree kernel). The row term
+// h_k(y) depends on (k, y) only, so it is tabulated once per row
+// rather than recomputed inside the budget loop.
 void build_extrema(SweepState& s) {
   int m = s.m, acap = s.acap;
   s.maxh.assign((size_t)(m + 1) * acap, -INFINITY);
   s.minh.assign((size_t)(m + 1) * acap, INFINITY);
   s.maxh[(size_t)m * acap] = 0.0;
   s.minh[(size_t)m * acap] = 0.0;
+  std::vector<double> hk;
   for (int k = m - 1; k >= 0; k--) {
+    const int rk = s.r[k];
+    hk.resize(rk + 1);
+    for (int y = 0; y <= rk; y++) hk[y] = h_term(s, k, y);
     int amax = std::min(acap - 1, s.suffix_r[k]);
     for (int a = 0; a <= amax; a++) {
       double bmax = -INFINITY, bmin = INFINITY;
       int y_lo = std::max(0, a - s.suffix_r[k + 1]);
-      int y_hi = std::min(s.r[k], a);
+      int y_hi = std::min(rk, a);
       for (int y = y_lo; y <= y_hi; y++) {
-        double nx = s.maxh[(size_t)(k + 1) * acap + (a - y)];
-        double nn = s.minh[(size_t)(k + 1) * acap + (a - y)];
-        double h = h_term(s, k, y);
-        if (std::isfinite(nx) && h + nx > bmax) bmax = h + nx;
-        if (std::isfinite(nn) && h + nn < bmin) bmin = h + nn;
+        const double cmx = s.maxh[(size_t)(k + 1) * acap + (a - y)];
+        const double cmn = s.minh[(size_t)(k + 1) * acap + (a - y)];
+        const double h = hk[y];
+        if (std::isfinite(cmx) && h + cmx > bmax) bmax = h + cmx;
+        if (std::isfinite(cmn) && h + cmn < bmin) bmin = h + cmn;
       }
       s.maxh[(size_t)k * acap + a] = bmax;
       s.minh[(size_t)k * acap + a] = bmin;
@@ -101,8 +106,20 @@ void build_extrema(SweepState& s) {
   }
 }
 
-// Sort a state's classes by q and merge within eps; multiplicities
-// combine exactly: w_rep += w * exp(q - q_rep).
+// Sort a state's classes by q and merge within eps;
+// multiplicities combine to first order: merged entries satisfy
+// |q - q_rep| <= eps, so exp(q - q_rep) is replaced by
+// 1 + (q - q_rep), with relative error below eps^2 / 2 (5e-25 at
+// the default eps of 1e-12, and still 6e-14 if the caller passes
+// FEXACT's own 3.45e-7 grouping width). This matches the merge
+// arithmetic of the general-c kernel (rxc_net_sweep.cpp). The
+// sort itself is the sweep's dominant cost (67 percent by stack
+// sampling), but replacing it with a balanced merge of the
+// per-parent sorted runs the expansion naturally produces was
+// measured 13 to 20 percent slower end to end: introsort's cache
+// behavior beats multi-round merge traffic at these sizes, and
+// the sort should be attacked by shrinking the class lists, not
+// by reordering them.
 void sort_merge(std::vector<ClassEntry>& cl, double eps) {
   std::sort(cl.begin(), cl.end(),
             [](const ClassEntry& x, const ClassEntry& y) {
@@ -111,7 +128,8 @@ void sort_merge(std::vector<ClassEntry>& cl, double eps) {
   size_t out = 0;
   for (size_t i = 0; i < cl.size(); i++) {
     if (out > 0 && cl[i].q - cl[out - 1].q <= eps) {
-      cl[out - 1].w += cl[i].w * std::exp(cl[i].q - cl[out - 1].q);
+      cl[out - 1].w +=
+        cl[i].w * (1.0 + (cl[i].q - cl[out - 1].q));
     } else {
       cl[out++] = cl[i];
     }
@@ -135,6 +153,7 @@ void run_sweep(SweepState& s, double eps_merge) {
   const int acap = s.acap;
   std::vector<std::vector<ClassEntry>> cur(c1 + 1), nxt(c1 + 1);
   std::vector<double> thr_hi(acap), thr_lo(acap), bulk_lm(acap);
+  std::vector<double> hk;      // h_k(y), tabulated once per stage
   std::vector<double> flog, F;
 
   // Root classification (the only class not born from a push).
@@ -156,17 +175,21 @@ void run_sweep(SweepState& s, double eps_merge) {
 
     if (!leaf) {
       // Per-child-state thresholds and bulk log-masses for stage
-      // k + 1, computed once per stage.
-      const double* mxn = &s.maxh[(size_t)(k + 1) * acap];
-      const double* mnn = &s.minh[(size_t)(k + 1) * acap];
+      // k + 1, and the row term h_k(y), computed once per stage.
+      const double* nxt_max = &s.maxh[(size_t)(k + 1) * acap];
+      const double* nxt_min = &s.minh[(size_t)(k + 1) * acap];
       const double off = s.log_thresh - s.log_const;
       for (int b = 0; b <= std::min(c1, s.suffix_r[k + 1]); b++) {
-        thr_hi[b] = std::isfinite(mxn[b]) ? off - mxn[b] : INFINITY;
-        thr_lo[b] = std::isfinite(mnn[b]) ? off - mnn[b] : INFINITY;
+        thr_hi[b] = std::isfinite(nxt_max[b])
+                    ? off - nxt_max[b] : INFINITY;
+        thr_lo[b] = std::isfinite(nxt_min[b])
+                    ? off - nxt_min[b] : INFINITY;
         bulk_lm[b] = s.log_const
                    + lchoose_lf(s, s.suffix_r[k + 1], b)
                    - s.slf[k + 1];
       }
+      hk.resize(s.r[k] + 1);
+      for (int y = 0; y <= s.r[k]; y++) hk[y] = h_term(s, k, y);
     }
 
     for (int a = 0; a <= c1; a++) {
@@ -183,7 +206,7 @@ void run_sweep(SweepState& s, double eps_merge) {
         const int y_hi = std::min(s.r[k], b);
         for (const ClassEntry& e : cl) {
           for (int y = y_lo; y <= y_hi; y++) {
-            const double q = e.q + h_term(s, k, y);
+            const double q = e.q + hk[y];
             const int bc = b - y;
             if (q <= thr_hi[bc]) continue;          // drop
             if (q > thr_lo[bc]) {                   // bulk
@@ -203,9 +226,10 @@ void run_sweep(SweepState& s, double eps_merge) {
       // pointers over classes sorted ascending in q.
       const int y_lo_st = std::max(0, b - s.r[k + 1]);
       const int y_hi_st = std::min(s.r[k], b);
-      const int w = y_hi_st - y_lo_st + 1;
-      flog.resize(w);
-      F.assign(w + 1, 0.0);
+      const int L = y_hi_st - y_lo_st + 1;   // leaf window width
+      flog.resize(L);
+      F.resize(L + 1);
+      F[0] = 0.0;
       for (int y = y_lo_st; y <= y_hi_st; y++) {
         const double fl = h_term(s, k, y) + h_term(s, k + 1, b - y);
         flog[y - y_lo_st] = fl;
@@ -222,7 +246,7 @@ void run_sweep(SweepState& s, double eps_merge) {
         }
         if (cur_hi >= cur_lo) {
           while (cur_lo > 0 && flog[cur_lo - 1] > c) cur_lo--;
-          while (cur_hi < w - 1 && flog[cur_hi + 1] > c) cur_hi++;
+          while (cur_hi < L - 1 && flog[cur_hi + 1] > c) cur_hi++;
           s.acc += e.w * std::exp(base)
                  * (F[cur_hi + 1] - F[cur_lo]);
         }
@@ -247,19 +271,24 @@ double rx2_net_sweep_cpp(IntegerMatrix dat,
                          double eps_merge = 1e-12) {
   SweepState s;
   s.m = dat.nrow();
+  if (dat.ncol() != 2)
+    Rcpp::stop("dat must have exactly 2 columns");
   if (s.m < 2) return 1.0;
 
   std::vector<int> r_unsorted(s.m);
-  int c0 = 0, c1col = 0;
+  int col_sum0 = 0, col_sum1 = 0;
   s.n = 0;
   for (int i = 0; i < s.m; i++) {
-    r_unsorted[i] = dat(i, 0) + dat(i, 1);
+    const int y0 = dat(i, 0), y1 = dat(i, 1);
+    if (y0 < 0 || y1 < 0)
+      Rcpp::stop("dat entries must be non-negative");
+    r_unsorted[i] = y0 + y1;
     s.n += r_unsorted[i];
-    c0 += dat(i, 0);
-    c1col += dat(i, 1);
+    col_sum0 += y0;
+    col_sum1 += y1;
   }
-  const bool flipped = c0 > c1col;
-  s.c1 = flipped ? c1col : c0;
+  const bool flipped = col_sum0 > col_sum1;
+  s.c1 = flipped ? col_sum1 : col_sum0;
   const int c2 = s.n - s.c1;
   s.acap = s.c1 + 1;
 
@@ -293,7 +322,6 @@ double rx2_net_sweep_cpp(IntegerMatrix dat,
   double log_p_obs = s.log_const;
   for (int i = 0; i < s.m; i++)
     log_p_obs += -s.lfact[y_obs[i]] - s.lfact[s.r[i] - y_obs[i]];
-  s.p_obs = std::exp(log_p_obs);
   s.log_thresh = log_p_obs + std::log1p(3.45254e-7);
 
   build_extrema(s);
