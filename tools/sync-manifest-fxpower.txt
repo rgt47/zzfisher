@@ -1,0 +1,20 @@
+# Files shared verbatim between this research workspace
+# (rgt47/fisherpowerunequaln) and the released package (rgt47/zzfisher).
+#
+# This workspace is authoritative. Edit these files here, then run
+# tools/sync-to-zzfisher.sh to export them. Mirrors the sync
+# discipline used by rgt47/fisherexacttestrx2 -> zzfisher, with
+# distinctly-named manifest/checksum/provenance files in zzfisher's
+# tools/ so the two independent sync pipelines do not collide.
+#
+# inst/tinytest/test_basic.R is NOT listed here: it calls internal
+# helpers with `fisherpowerunequaln:::`, which must read `zzfisher:::`
+# on the other side, so it is adapted by hand in each repository
+# instead of copied verbatim (zzfisher's copy is
+# inst/tinytest/test_fxpower.R).
+#
+# Blank lines and lines beginning with '#' are ignored.
+
+R/fxpower.R
+R/fxpower_r.R
+src/fxpower_rcpp.cpp

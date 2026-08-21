@@ -1,3 +1,26 @@
+# zzfisher 0.5.0
+
+* New `fisher_power()`: exact power and sample size for the r x 2
+  Fisher's exact test, following Conlon & Thomas (1993, Algorithm
+  AS 280). A direct re-derivation from the power function's
+  mathematical definition (exhaustive enumeration of the null
+  rejection region against the product-binomial alternative), not a
+  port of the original Fortran/NAG source. Mirrors
+  `stats::power.t.test()`'s calling convention: leave `n1` or `power`
+  `NULL` and it solves for the missing one, returning a classed
+  `power.htest` object. Cross-checked against
+  `Exact::power.exact.test(method = "fisher")` to 6 decimal places.
+* New `fxpower()`/`fxpower_r()`/`ss_fxpower()`/`power_table()`/
+  `ss_table()`: a second, independently developed power-function
+  implementation migrated from the research workspace
+  `rgt47/fisherpowerunequaln`. `fxpower()` is a compiled C++
+  mode-finding algorithm generalizing Algorithm AS 280 to unequal
+  allocation, with an `eps` trimming parameter trading a quantified
+  error bound for one to two orders of magnitude of speed; `eps = 0`
+  gives the exact one-sided power. Verified bitwise identical to
+  `fisher_power(..., alternative = "less")` across the migration's
+  test grid.
+
 # zzfisher 0.4.1
 
 * Picks up sweep-kernel work completed in the research workspace

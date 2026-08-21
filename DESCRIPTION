@@ -1,6 +1,6 @@
 Package: zzfisher
 Title: Fisher's Exact Test for r x 2 Contingency Tables
-Version: 0.4.1
+Version: 0.5.0
 Authors@R:
     person("Ronald G.", "Thomas", , "rgthomas@ucsd.edu",
            role = c("aut", "cre"),
@@ -11,7 +11,10 @@ Description: Multiple algorithmic implementations of Fisher's exact test
     model. Includes tree-based (mode-centric traversal with pruning) and
     network-based (state-space enumeration with Vandermonde bulk-sum)
     approaches in pure R, C, and C++. User-facing functions dispatch on
-    the shape of the input table.
+    the shape of the input table. Also includes exact power and sample
+    size calculation for the 2 x 2 test, following Conlon and Thomas
+    (1993) Algorithm AS 280 and its generalization to unequal group
+    sizes.
 License: GPL (>= 3)
 Imports: Rcpp
 LinkingTo: Rcpp

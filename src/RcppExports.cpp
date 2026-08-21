@@ -10,6 +10,66 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// fxpower_cpp
+List fxpower_cpp(int n1, int n2, double p1, double p2, double alpha, double eps);
+RcppExport SEXP _zzfisher_fxpower_cpp(SEXP n1SEXP, SEXP n2SEXP, SEXP p1SEXP, SEXP p2SEXP, SEXP alphaSEXP, SEXP epsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n1(n1SEXP);
+    Rcpp::traits::input_parameter< int >::type n2(n2SEXP);
+    Rcpp::traits::input_parameter< double >::type p1(p1SEXP);
+    Rcpp::traits::input_parameter< double >::type p2(p2SEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
+    rcpp_result_gen = Rcpp::wrap(fxpower_cpp(n1, n2, p1, p2, alpha, eps));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cv_unequal_r
+int cv_unequal_r(int n1, int n2, int r, double alpha);
+RcppExport SEXP _zzfisher_cv_unequal_r(SEXP n1SEXP, SEXP n2SEXP, SEXP rSEXP, SEXP alphaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n1(n1SEXP);
+    Rcpp::traits::input_parameter< int >::type n2(n2SEXP);
+    Rcpp::traits::input_parameter< int >::type r(rSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    rcpp_result_gen = Rcpp::wrap(cv_unequal_r(n1, n2, r, alpha));
+    return rcpp_result_gen;
+END_RCPP
+}
+// xfmax_unequal_r
+int xfmax_unequal_r(int n1, int n2, int r, double theta);
+RcppExport SEXP _zzfisher_xfmax_unequal_r(SEXP n1SEXP, SEXP n2SEXP, SEXP rSEXP, SEXP thetaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n1(n1SEXP);
+    Rcpp::traits::input_parameter< int >::type n2(n2SEXP);
+    Rcpp::traits::input_parameter< int >::type r(rSEXP);
+    Rcpp::traits::input_parameter< double >::type theta(thetaSEXP);
+    rcpp_result_gen = Rcpp::wrap(xfmax_unequal_r(n1, n2, r, theta));
+    return rcpp_result_gen;
+END_RCPP
+}
+// binom_joint_r
+double binom_joint_r(int n1, int n2, double p1, double p2, int x, int r);
+RcppExport SEXP _zzfisher_binom_joint_r(SEXP n1SEXP, SEXP n2SEXP, SEXP p1SEXP, SEXP p2SEXP, SEXP xSEXP, SEXP rSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n1(n1SEXP);
+    Rcpp::traits::input_parameter< int >::type n2(n2SEXP);
+    Rcpp::traits::input_parameter< double >::type p1(p1SEXP);
+    Rcpp::traits::input_parameter< double >::type p2(p2SEXP);
+    Rcpp::traits::input_parameter< int >::type x(xSEXP);
+    Rcpp::traits::input_parameter< int >::type r(rSEXP);
+    rcpp_result_gen = Rcpp::wrap(binom_joint_r(n1, n2, p1, p2, x, r));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rx2_net_dp_cpp
 double rx2_net_dp_cpp(IntegerMatrix dat);
 RcppExport SEXP _zzfisher_rx2_net_dp_cpp(SEXP datSEXP) {
@@ -145,6 +205,10 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_zzfisher_fxpower_cpp", (DL_FUNC) &_zzfisher_fxpower_cpp, 6},
+    {"_zzfisher_cv_unequal_r", (DL_FUNC) &_zzfisher_cv_unequal_r, 4},
+    {"_zzfisher_xfmax_unequal_r", (DL_FUNC) &_zzfisher_xfmax_unequal_r, 4},
+    {"_zzfisher_binom_joint_r", (DL_FUNC) &_zzfisher_binom_joint_r, 6},
     {"_zzfisher_rx2_net_dp_cpp", (DL_FUNC) &_zzfisher_rx2_net_dp_cpp, 1},
     {"_zzfisher_rx2_net_sweep_cpp", (DL_FUNC) &_zzfisher_rx2_net_sweep_cpp, 2},
     {"_zzfisher_rx2_net_vander_cpp", (DL_FUNC) &_zzfisher_rx2_net_vander_cpp, 1},
