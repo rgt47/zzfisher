@@ -1,4 +1,4 @@
-# zzcollab r-package.yml v0.2.1
+# zzcollab r-package.yml v0.3.0
 #
 # Self-adapting package check. A detect job picks the environment from artifact
 # presence, then the matching check job runs:
