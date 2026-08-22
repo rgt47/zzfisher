@@ -33,17 +33,19 @@
     hi <- min(n1, m)
     if (lo > hi) next
     xs <- lo:hi
-    d <- dhyper(xs, n1, n2, m)
 
     reject <- switch(
       alternative,
       greater = phyper(xs - 1, n1, n2, m, lower.tail = FALSE) <= alpha,
       less    = phyper(xs, n1, n2, m, lower.tail = TRUE) <= alpha,
-      two.sided = vapply(
-        seq_along(xs),
-        function(i) sum(d[d <= d[i] * (1 + tol)]) <= alpha,
-        logical(1)
-      )
+      two.sided = {
+        d <- dhyper(xs, n1, n2, m)
+        vapply(
+          seq_along(xs),
+          function(i) sum(d[d <= d[i] * (1 + tol)]) <= alpha,
+          logical(1)
+        )
+      }
     )
 
     if (any(reject))
