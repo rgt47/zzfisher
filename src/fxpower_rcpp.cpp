@@ -12,6 +12,21 @@
 using namespace Rcpp;
 
 // ------------------------------------------------------------------ //
+// Null hypergeometric density (no p1, p2) -- used only by the        //
+// two-sided rejection rule below. binom_joint() above is the JOINT   //
+// density under the alternative (p1, p2); this is P(X = x | r) under //
+// the null (independence), i.e. what R's dhyper(x, n1, n2, r) gives. //
+// ------------------------------------------------------------------ //
+static double hyper_null_dens(const std::vector<double> &lf,
+                              int n1, int n2, int x, int r) {
+  int y = r - x;
+  double logp = lf[n1] - lf[x] - lf[n1 - x] +
+                lf[n2] - lf[y] - lf[n2 - y] -
+                lf[n1 + n2] + lf[r] + lf[n1 + n2 - r];
+  return std::exp(logp);
+}
+
+// ------------------------------------------------------------------ //
 // Log-factorial table                                                  //
 // ------------------------------------------------------------------ //
 static std::vector<double> make_lfact(int nmax) {
@@ -108,6 +123,96 @@ static int cv_unequal(const std::vector<double> &lf,
 }
 
 // ------------------------------------------------------------------ //
+// Two-sided rejection boundaries for fixed r (minimum-likelihood      //
+// rule): a table x is rejected if its own null density is no larger  //
+// than (1+tol) times itself -- i.e. every x is compared against its  //
+// OWN threshold, so the full rejection set is determined once by     //
+// finding the two boundaries x_L, x_R such that                      //
+//   reject = [xmin_r, x_L] union [x_R, xmax_r].                      //
+// This holds because hyper_null_dens(., r) is unimodal in x: the set //
+// {y : dens(y) <= dens(x)} is always a prefix of the increasing left //
+// tail plus a suffix of the decreasing right tail, and the total     //
+// mass of that set (= the two-sided p-value if x were observed) is   //
+// itself monotone as x moves away from the mode in either direction  //
+// -- so x_L / x_R are each found by one binary search over position, //
+// with each comparison itself a binary search into the OPPOSITE      //
+// tail via std::upper_bound(). Mirrors the R-level fix in            //
+// fisher_power_fast()'s two.sided path (R/rx2_power_fast.R).         //
+// ------------------------------------------------------------------ //
+
+// Returns -1 for x_L if the left tail is empty of rejections, and
+// n_d (one past the last valid index) for x_R if the right tail is
+// empty; both are relative to xmin_r (add xmin_r to get the actual x).
+static void cv_two_sided(const std::vector<double> &lf, int n1, int n2,
+                         int r, double alpha, double tol,
+                         int &x_L, int &x_R) {
+  int xmin_r = std::max(0, r - n2);
+  int xmax_r = std::min(r, n1);
+  int n_d = xmax_r - xmin_r + 1;
+
+  std::vector<double> d(n_d);
+  for (int i = 0; i < n_d; i++) {
+    d[i] = hyper_null_dens(lf, n1, n2, xmin_r + i, r);
+  }
+
+  int peak = 0;
+  for (int i = 1; i < n_d; i++) {
+    if (d[i] > d[peak]) peak = i;
+  }
+
+  std::vector<double> pre(n_d), suf(n_d);
+  pre[0] = d[0];
+  for (int i = 1; i < n_d; i++) pre[i] = pre[i - 1] + d[i];
+  suf[n_d - 1] = d[n_d - 1];
+  for (int i = n_d - 2; i >= 0; i--) suf[i] = suf[i + 1] + d[i];
+
+  std::vector<double> right_asc;
+  if (peak < n_d - 1) {
+    right_asc.assign(d.begin() + peak + 1, d.end());
+    std::reverse(right_asc.begin(), right_asc.end());
+  }
+
+  auto total_mass = [&](int idx) -> double {
+    double t = d[idx] * (1.0 + tol);
+    int cl = static_cast<int>(
+      std::upper_bound(d.begin(), d.begin() + peak + 1, t) - d.begin()
+    );
+    int cr = right_asc.empty() ? 0 : static_cast<int>(
+      std::upper_bound(right_asc.begin(), right_asc.end(), t) -
+      right_asc.begin()
+    );
+    double left_sum = (cl > 0) ? pre[cl - 1] : 0.0;
+    double right_sum = (cr > 0) ? suf[n_d - cr] : 0.0;
+    return left_sum + right_sum;
+  };
+
+  // x_L: rightmost index in [0, peak] with total_mass(idx) <= alpha
+  // (total_mass is nondecreasing as idx moves from 0 toward peak).
+  {
+    int lo = 0, hi = peak, result = -1;
+    while (lo <= hi) {
+      int mid = lo + (hi - lo) / 2;
+      if (total_mass(mid) <= alpha) { result = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    x_L = result;
+  }
+
+  // x_R: leftmost index in [peak+1, n_d-1] with total_mass(idx) <=
+  // alpha (total_mass is nonincreasing as idx moves away from peak,
+  // so this predicate is monotone: false then true).
+  {
+    int lo = peak + 1, hi = n_d - 1, result = n_d;
+    while (lo <= hi) {
+      int mid = lo + (hi - lo) / 2;
+      if (total_mass(mid) <= alpha) { result = mid; hi = mid - 1; }
+      else lo = mid + 1;
+    }
+    x_R = result;
+  }
+}
+
+// ------------------------------------------------------------------ //
 // Sum f(x, r-x) along fixed r via adjacency recurrence                //
 // ------------------------------------------------------------------ //
 static double fsum_unequal(int from, int to, int inc, double f,
@@ -149,7 +254,8 @@ static double fsum_unequal(int from, int to, int inc, double f,
 
 // [[Rcpp::export(name = ".fxpower_cpp")]]
 List fxpower_cpp(int n1, int n2, double p1, double p2,
-                 double alpha, double eps) {
+                 double alpha, double eps,
+                 bool two_sided = false, double tol = 3.45254e-7) {
   if (n1 <= 0 || n2 <= 0 ||
       p1 <= 0.0 || p1 >= 1.0 ||
       p2 <= 0.0 || p2 >= 1.0 ||
@@ -186,33 +292,128 @@ List fxpower_cpp(int n1, int n2, double p1, double p2,
   while (!finished) {
     if (r >= 0 && r <= ntot) {
       int xmin_r = std::max(0, r - n2);
-      int xcv = cv_unequal(lf, n1, n2, r, alpha);
+      int xmax_r = std::min(r, n1);
+
       int xfm = xfmax_unequal(n1, n2, r, theta);
 
-      if (xcv >= xmin_r) {
-        int rcnt = 0;
-        double f;
+      if (!two_sided) {
+        int xcv = cv_unequal(lf, n1, n2, r, alpha);
 
-        if (xcv <= xfm) {
-          f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
-                          xcv, r);
-          powsum += fsum_unequal(xcv, xmin_r, -1, f, flim,
-                                 n1, n2, theta, r, rcnt);
-          if (rcnt == 0 && i > 0) { finished = true; break; }
-          count += rcnt;
-        } else {
-          f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
-                          xfm, r);
-          powsum += fsum_unequal(xfm, xmin_r, -1, f, flim,
-                                 n1, n2, theta, r, rcnt);
-          if (rcnt == 0 && i > 0) { finished = true; break; }
-          count += rcnt;
+        if (xcv >= xmin_r) {
+          int rcnt = 0;
+          double f;
 
-          f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
-                          xfm + 1, r);
-          powsum += fsum_unequal(xfm + 1, xcv, 1, f, flim,
-                                 n1, n2, theta, r, rcnt);
-          count += rcnt;
+          if (xcv <= xfm) {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                            xcv, r);
+            powsum += fsum_unequal(xcv, xmin_r, -1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            if (rcnt == 0 && i > 0) { finished = true; break; }
+            count += rcnt;
+          } else {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                            xfm, r);
+            powsum += fsum_unequal(xfm, xmin_r, -1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            if (rcnt == 0 && i > 0) { finished = true; break; }
+            count += rcnt;
+
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                            xfm + 1, r);
+            powsum += fsum_unequal(xfm + 1, xcv, 1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            count += rcnt;
+          }
+        }
+      } else {
+        // Two-sided (minimum-likelihood) rejection region for this r:
+        // [xmin_r, x_L] union [x_R, xmax_r]. binom_joint(., r) (the
+        // ALTERNATIVE-distribution density being summed) is itself
+        // unimodal in x with mode xfm -- the same xfm used by the
+        // one-sided path above. If xfm falls inside a block, that
+        // block is split at xfm exactly as the one-sided path splits
+        // at xcv/xfm, so each fsum_unequal() walk starts at (or moves
+        // away from) a local peak of the ALTERNATIVE density and
+        // f is monotonically nonincreasing along the walk -- required
+        // for the eps-trimming early-stop to mean what it claims.
+        // Starting instead from a block's outer boundary (nearer the
+        // NULL density's tail, irrelevant to where the ALTERNATIVE
+        // mass actually peaks) can make f increase along the walk,
+        // tripping the f < flim stop immediately and discarding a
+        // block's entire contribution.
+        int xL, xR;
+        cv_two_sided(lf, n1, n2, r, alpha, tol, xL, xR);
+        int n_d = xmax_r - xmin_r + 1;
+        bool attempted = false;
+        int rcnt_total = 0;
+
+        if (xL >= 0) {
+          attempted = true;
+          int x_L_actual = xmin_r + xL;
+          int rcnt = 0;
+          double f;
+
+          if (xfm <= x_L_actual) {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2, xfm, r);
+            powsum += fsum_unequal(xfm, xmin_r, -1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            count += rcnt;
+            rcnt_total += rcnt;
+
+            if (xfm + 1 <= x_L_actual) {
+              rcnt = 0;
+              f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                              xfm + 1, r);
+              powsum += fsum_unequal(xfm + 1, x_L_actual, 1, f, flim,
+                                     n1, n2, theta, r, rcnt);
+              count += rcnt;
+              rcnt_total += rcnt;
+            }
+          } else {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                            x_L_actual, r);
+            powsum += fsum_unequal(x_L_actual, xmin_r, -1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            count += rcnt;
+            rcnt_total += rcnt;
+          }
+        }
+
+        if (xR < n_d) {
+          attempted = true;
+          int x_R_actual = xmin_r + xR;
+          int rcnt = 0;
+          double f;
+
+          if (xfm >= x_R_actual) {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2, xfm, r);
+            powsum += fsum_unequal(xfm, xmax_r, 1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            count += rcnt;
+            rcnt_total += rcnt;
+
+            if (xfm - 1 >= x_R_actual) {
+              rcnt = 0;
+              f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                              xfm - 1, r);
+              powsum += fsum_unequal(xfm - 1, x_R_actual, -1, f, flim,
+                                     n1, n2, theta, r, rcnt);
+              count += rcnt;
+              rcnt_total += rcnt;
+            }
+          } else {
+            f = binom_joint(lf, n1, n2, lp1, lp2, lmp1, lmp2,
+                            x_R_actual, r);
+            powsum += fsum_unequal(x_R_actual, xmax_r, 1, f, flim,
+                                   n1, n2, theta, r, rcnt);
+            count += rcnt;
+            rcnt_total += rcnt;
+          }
+        }
+
+        if (attempted && rcnt_total == 0 && i > 0) {
+          finished = true;
+          break;
         }
       }
 

@@ -4,7 +4,14 @@
 \alias{fxpower_alpha_star}
 \title{Empirical Type I Error for Fisher's Exact Test}
 \usage{
-fxpower_alpha_star(n1, n2, p0, alpha, eps = 1e-06)
+fxpower_alpha_star(
+  n1,
+  n2,
+  p0,
+  alpha,
+  eps = 1e-06,
+  alternative = c("less", "two.sided")
+)
 }
 \arguments{
 \item{n1}{Integer. Sample size in group 1.}
@@ -16,6 +23,9 @@ fxpower_alpha_star(n1, n2, p0, alpha, eps = 1e-06)
 \item{alpha}{Numeric. Nominal significance level.}
 
 \item{eps}{Numeric. Trimming parameter.}
+
+\item{alternative}{One of \code{"less"} or \code{"two.sided"};
+see \code{\link{fxpower}}.}
 }
 \value{
 Numeric scalar: the empirical type I error rate.

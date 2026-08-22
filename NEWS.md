@@ -1,3 +1,33 @@
+# zzfisher 0.7.0
+
+* `fxpower()` gains a two-sided option (`alternative = c("less",
+  "two.sided")`, default unchanged at `"less"`): the compiled
+  mode-centered kernel (`src/fxpower_rcpp.cpp`) previously had no
+  two-sided rejection rule at all, by construction rather than by
+  omission. The new `cv_two_sided()` locates the minimum-likelihood
+  rejection region's two boundaries via binary search on the null
+  hypergeometric's monotonic tails (the same idea used in
+  `fisher_power_fast()`'s two-sided fix, ported to C++ using
+  `std::upper_bound`), reusing the existing `fsum_unequal()`
+  adjacency-recurrence summation and the mode-finding machinery
+  already in place for the one-sided path. Verified against
+  `fisher_power_fast(alternative = "two.sided")` to ~1e-12 (exact) and
+  within the reported eps-trimming error bound (checked, not merely
+  assumed) at every configuration tested, up to n = 1000.
+* Fixed a bug found and caught by that verification before release:
+  the first implementation of the two-sided eps-trimming walked each
+  rejection block from its own outer boundary rather than from the
+  alternative distribution's own mode (`xfm`) when the mode falls
+  inside that block. Since `binom_joint()` is itself unimodal in `x`,
+  starting from the wrong end could make the summed values increase
+  rather than decrease along the walk, tripping the `f < flim`
+  early-stop immediately and silently discarding a whole block's
+  contribution -- collapsing power to 0 at large n where trimming
+  inevitably engages (n = 5000 triggered it outright; n <= 2000
+  happened not to). Fixed by mirroring the one-sided path's existing
+  `xfm`-aware block-splitting logic for each side. Regression-tested
+  in `inst/tinytest/test_two_sided.R`.
+
 # zzfisher 0.6.1
 
 * `fisher_power_fast()`'s `alternative = "two.sided"` path no longer

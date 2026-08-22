@@ -34,6 +34,13 @@
 #   fxpower_r_ref    fxpower_r() -- pure R reference for fxpower,
 #                    capped at n <= 500 per the manuscript's own
 #                    feasibility note
+#   fxpower_2s_exact / fxpower_2s_trim  fxpower(..., alternative =
+#                    "two.sided", eps = 0 / 1e-6) -- the same
+#                    compiled kernel's two-sided rejection rule,
+#                    locating the minimum-likelihood boundaries via
+#                    binary search on the null hypergeometric's two
+#                    monotonic tails (mirroring fisher_power_fast_2s's
+#                    fix, ported to C++)
 #   exact_pkg        Exact::power.exact.test(method = "fisher"),
 #                    an independent third-party implementation, run
 #                    if the Exact package is installed
@@ -139,6 +146,20 @@ algorithms <- list(
       fxpower_r(cfg$n1, cfg$n2, cfg$p1, cfg$p2, alpha = cfg$alpha)
     },
     n_cap = 500, group = "one-sided"
+  ),
+  fxpower_2s_exact = list(
+    fn = function(cfg) {
+      fxpower(cfg$n1, cfg$n2, cfg$p1, cfg$p2,
+              alpha = cfg$alpha, eps = 0, alternative = "two.sided")$power
+    },
+    n_cap = Inf, group = "two-sided"
+  ),
+  fxpower_2s_trim = list(
+    fn = function(cfg) {
+      fxpower(cfg$n1, cfg$n2, cfg$p1, cfg$p2,
+              alpha = cfg$alpha, eps = 1e-6, alternative = "two.sided")$power
+    },
+    n_cap = Inf, group = "two-sided"
   )
 )
 
@@ -242,19 +263,20 @@ for (cfg in configs) {
   ))
 }
 
-cat("\n--- cross-validation (two-sided group: fast vs original) ---\n")
+cat("\n--- cross-validation (two-sided group, all vs fisher_power_fast_2s) ---\n")
 two_sided <- comparison[comparison$group == "two-sided" &
                          is.na(comparison$skipped), ]
 for (cfg in configs) {
   sub <- two_sided[two_sided$n1 == cfg$n1 & two_sided$n2 == cfg$n2 &
                     two_sided$p1 == cfg$p1 & two_sided$p2 == cfg$p2, ]
   if (nrow(sub) < 2) next
-  ref <- sub$power[sub$algorithm == "fisher_power_2s"]
-  fast <- sub$power[sub$algorithm == "fisher_power_fast_2s"]
-  if (length(ref) == 0 || length(fast) == 0) next
+  ref <- sub$power[sub$algorithm == "fisher_power_fast_2s"]
+  if (length(ref) == 0) next
+  diffs <- abs(sub$power - ref)
+  names(diffs) <- sub$algorithm
   cat(sprintf(
-    "n1=%d n2=%d p1=%.2f p2=%.2f  |fast - original| = %.2e\n",
-    cfg$n1, cfg$n2, cfg$p1, cfg$p2, abs(fast - ref)
+    "n1=%d n2=%d p1=%.2f p2=%.2f  max |diff from fisher_power_fast_2s| = %.2e\n",
+    cfg$n1, cfg$n2, cfg$p1, cfg$p2, max(diffs)
   ))
 }
 
@@ -289,6 +311,14 @@ if (all(c("fisher_power_fast_2s", "fisher_power_2s") %in% names(wide_time))) {
     "fisher_power_2s / fisher_power_fast_2s:  median %.1fx, max %.1fx\n",
     stats::median(wide_time$fisher_power_2s[ok] / wide_time$fisher_power_fast_2s[ok]),
     max(wide_time$fisher_power_2s[ok] / wide_time$fisher_power_fast_2s[ok])
+  ))
+}
+if (all(c("fxpower_2s_trim", "fisher_power_fast_2s") %in% names(wide_time))) {
+  ok <- stats::complete.cases(wide_time[, c("fxpower_2s_trim", "fisher_power_fast_2s")])
+  cat(sprintf(
+    "fisher_power_fast_2s / fxpower_2s_trim:  median %.1fx, max %.1fx\n",
+    stats::median(wide_time$fisher_power_fast_2s[ok] / wide_time$fxpower_2s_trim[ok]),
+    max(wide_time$fisher_power_fast_2s[ok] / wide_time$fxpower_2s_trim[ok])
   ))
 }
 

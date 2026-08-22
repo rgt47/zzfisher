@@ -18,3 +18,4 @@
 R/fxpower.R
 R/fxpower_r.R
 src/fxpower_rcpp.cpp
+inst/tinytest/test_two_sided.R

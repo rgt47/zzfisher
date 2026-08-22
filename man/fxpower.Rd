@@ -4,7 +4,15 @@
 \alias{fxpower}
 \title{Power of Fisher's Exact Test with Unequal Group Sizes}
 \usage{
-fxpower(n1, n2, p1, p2, alpha = 0.05, eps = 1e-06)
+fxpower(
+  n1,
+  n2,
+  p1,
+  p2,
+  alpha = 0.05,
+  eps = 1e-06,
+  alternative = c("less", "two.sided")
+)
 }
 \arguments{
 \item{n1}{Integer. Sample size in group 1 (treatment).}
@@ -15,11 +23,20 @@ fxpower(n1, n2, p1, p2, alpha = 0.05, eps = 1e-06)
 
 \item{p2}{Numeric. True event probability in group 2.}
 
-\item{alpha}{Numeric. One-sided type I error rate.}
+\item{alpha}{Numeric. Type I error rate (one-sided if
+\code{alternative = "less"}, two-sided minimum-likelihood
+convention if \code{alternative = "two.sided"}).}
 
 \item{eps}{Numeric. Trimming parameter controlling speed vs
 accuracy. Set to 0 for exact power (slower). Values around
 1e-5 to 1e-7 give excellent approximations with bounded error.}
+
+\item{alternative}{One of \code{"less"} (the original one-sided
+test: rejects for an unusually small x1) or \code{"two.sided"}
+(Fisher's minimum-likelihood rule, matching
+\code{fisher_power()}'s \code{alternative = "two.sided"} and
+\code{fisher_power_fast()}'s -- see \code{tol} there for the
+tie tolerance, fixed here at \code{3.45254e-7}).}
 }
 \value{
 A list of class \code{"fxpower"} with components:

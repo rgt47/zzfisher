@@ -9,10 +9,18 @@
 #' @param n2 Integer. Sample size in group 2 (control).
 #' @param p1 Numeric. True event probability in group 1.
 #' @param p2 Numeric. True event probability in group 2.
-#' @param alpha Numeric. One-sided type I error rate.
+#' @param alpha Numeric. Type I error rate (one-sided if
+#'   \code{alternative = "less"}, two-sided minimum-likelihood
+#'   convention if \code{alternative = "two.sided"}).
 #' @param eps Numeric. Trimming parameter controlling speed vs
 #'   accuracy. Set to 0 for exact power (slower). Values around
 #'   1e-5 to 1e-7 give excellent approximations with bounded error.
+#' @param alternative One of \code{"less"} (the original one-sided
+#'   test: rejects for an unusually small x1) or \code{"two.sided"}
+#'   (Fisher's minimum-likelihood rule, matching
+#'   \code{fisher_power()}'s \code{alternative = "two.sided"} and
+#'   \code{fisher_power_fast()}'s -- see \code{tol} there for the
+#'   tie tolerance, fixed here at \code{3.45254e-7}).
 #'
 #' @return A list of class \code{"fxpower"} with components:
 #'   \item{power}{Computed power of the test.}
@@ -34,7 +42,9 @@
 #' fxpower(n1 = 200, n2 = 100, p1 = 0.05, p2 = 0.10, alpha = 0.05)
 #'
 #' @export
-fxpower <- function(n1, n2, p1, p2, alpha = 0.05, eps = 1e-6) {
+fxpower <- function(n1, n2, p1, p2, alpha = 0.05, eps = 1e-6,
+                    alternative = c("less", "two.sided")) {
+  alternative <- match.arg(alternative)
   stopifnot(
     is.numeric(n1), length(n1) == 1, n1 > 0, n1 == as.integer(n1),
     is.numeric(n2), length(n2) == 1, n2 > 0, n2 == as.integer(n2),
@@ -44,13 +54,16 @@ fxpower <- function(n1, n2, p1, p2, alpha = 0.05, eps = 1e-6) {
     is.numeric(eps), length(eps) == 1, eps >= 0, eps < 1
   )
 
+  two_sided <- identical(alternative, "two.sided")
+
   result <- .fxpower_cpp(
     as.integer(n1), as.integer(n2),
     as.double(p1), as.double(p2),
-    as.double(alpha), as.double(eps)
+    as.double(alpha), as.double(eps),
+    two_sided
   )
 
-  alpha_star <- fxpower_alpha_star(n1, n2, p2, alpha, eps)
+  alpha_star <- fxpower_alpha_star(n1, n2, p2, alpha, eps, alternative)
 
   structure(
     list(
@@ -62,7 +75,8 @@ fxpower <- function(n1, n2, p1, p2, alpha = 0.05, eps = 1e-6) {
       p1 = p1,
       p2 = p2,
       alpha = alpha,
-      alpha_star = alpha_star
+      alpha_star = alpha_star,
+      alternative = alternative
     ),
     class = "fxpower"
   )
@@ -79,15 +93,20 @@ fxpower <- function(n1, n2, p1, p2, alpha = 0.05, eps = 1e-6) {
 #' @param p0 Numeric. Common event probability under H0.
 #' @param alpha Numeric. Nominal significance level.
 #' @param eps Numeric. Trimming parameter.
+#' @param alternative One of \code{"less"} or \code{"two.sided"};
+#'   see \code{\link{fxpower}}.
 #'
 #' @return Numeric scalar: the empirical type I error rate.
 #'
 #' @keywords internal
-fxpower_alpha_star <- function(n1, n2, p0, alpha, eps = 1e-6) {
+fxpower_alpha_star <- function(n1, n2, p0, alpha, eps = 1e-6,
+                               alternative = c("less", "two.sided")) {
+  alternative <- match.arg(alternative)
   result <- .fxpower_cpp(
     as.integer(n1), as.integer(n2),
     as.double(p0), as.double(p0),
-    as.double(alpha), as.double(eps)
+    as.double(alpha), as.double(eps),
+    identical(alternative, "two.sided")
   )
   result$power
 }
@@ -95,7 +114,8 @@ fxpower_alpha_star <- function(n1, n2, p0, alpha, eps = 1e-6) {
 
 #' @export
 print.fxpower <- function(x, ...) {
-  cat("Power of Fisher's Exact Test (one-sided)\n\n")
+  side <- if (identical(x$alternative, "two.sided")) "two-sided" else "one-sided"
+  cat(sprintf("Power of Fisher's Exact Test (%s)\n\n", side))
   cat("  n1 =", x$n1, " n2 =", x$n2,
       " (ratio =", sprintf("%.2f", x$n1 / x$n2), ")\n")
   cat("  p1 =", x$p1, " p2 =", x$p2, "\n")

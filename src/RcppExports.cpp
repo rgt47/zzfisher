@@ -11,8 +11,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // fxpower_cpp
-List fxpower_cpp(int n1, int n2, double p1, double p2, double alpha, double eps);
-RcppExport SEXP _zzfisher_fxpower_cpp(SEXP n1SEXP, SEXP n2SEXP, SEXP p1SEXP, SEXP p2SEXP, SEXP alphaSEXP, SEXP epsSEXP) {
+List fxpower_cpp(int n1, int n2, double p1, double p2, double alpha, double eps, bool two_sided, double tol);
+RcppExport SEXP _zzfisher_fxpower_cpp(SEXP n1SEXP, SEXP n2SEXP, SEXP p1SEXP, SEXP p2SEXP, SEXP alphaSEXP, SEXP epsSEXP, SEXP two_sidedSEXP, SEXP tolSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -22,7 +22,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type p2(p2SEXP);
     Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
     Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
-    rcpp_result_gen = Rcpp::wrap(fxpower_cpp(n1, n2, p1, p2, alpha, eps));
+    Rcpp::traits::input_parameter< bool >::type two_sided(two_sidedSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(fxpower_cpp(n1, n2, p1, p2, alpha, eps, two_sided, tol));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -205,7 +207,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_zzfisher_fxpower_cpp", (DL_FUNC) &_zzfisher_fxpower_cpp, 6},
+    {"_zzfisher_fxpower_cpp", (DL_FUNC) &_zzfisher_fxpower_cpp, 8},
     {"_zzfisher_cv_unequal_r", (DL_FUNC) &_zzfisher_cv_unequal_r, 4},
     {"_zzfisher_xfmax_unequal_r", (DL_FUNC) &_zzfisher_xfmax_unequal_r, 4},
     {"_zzfisher_binom_joint_r", (DL_FUNC) &_zzfisher_binom_joint_r, 6},
