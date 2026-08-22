@@ -9,6 +9,14 @@
 #                    R, elementwise unimodal-tail scan (the most
 #                    expensive path: see docs on binary-search
 #                    opportunities not yet implemented)
+#   fisher_power_fast_1s  fisher_power_fast(alternative = "less") --
+#                    same pure-R algorithm as fisher_power_1s with one
+#                    fix: no wasted dhyper() call on the one-sided
+#                    path. Numerically identical to fisher_power_1s;
+#                    the fixed-(n1,n2) grid below only exercises this
+#                    one difference. Its other fix (doubling search +
+#                    bisection when solving for n1) only pays off in
+#                    the separate "solve for n1" section below.
 #   fxpower_exact    fxpower(..., eps = 0)   -- compiled C++,
 #                    mode-centered zigzag traversal, no trimming
 #   fxpower_trim     fxpower(..., eps = 1e-6) -- same kernel with
@@ -84,6 +92,13 @@ algorithms <- list(
                    alpha = cfg$alpha, alternative = "two.sided")$power
     },
     n_cap = 200, group = "two-sided"
+  ),
+  fisher_power_fast_1s = list(
+    fn = function(cfg) {
+      fisher_power_fast(cfg$n1, cfg$n2, p1 = cfg$p1, p2 = cfg$p2,
+                        alpha = cfg$alpha, alternative = "less")$power
+    },
+    n_cap = Inf, group = "one-sided"
   ),
   fxpower_exact = list(
     fn = function(cfg) {
@@ -235,3 +250,45 @@ if (all(c("fxpower_trim", "fisher_power_1s") %in% names(wide_time))) {
 
 cat(sprintf("\nfull results written to %s\n",
             file.path(out_dir, "power_comparison.csv")))
+
+# --- solve-for-n1: where fisher_power_fast's doubling search and
+# ss_fxpower's compiled-but-still-linear n2 scan actually differ -----
+#
+# The fixed-(n1, n2) grid above only exercises fisher_power_fast's
+# first fix (dropping the wasted dhyper() call); its second fix
+# (doubling search + bisection instead of a linear scan) only shows up
+# when solving for the sample size itself. ss_fxpower() also solves
+# for sample size, but by linearly incrementing n2 one at a time
+# (R/fxpower.R's own documented approach) -- compiled, so each step is
+# cheap, but still O(target n) steps rather than O(log(target n)).
+
+cat("\n--- solve for n1 (target power = 0.9, p1 = 0.05, p2 = 0.10) ---\n")
+
+solvers <- list(
+  fisher_power      = function() {
+    fisher_power(p1 = 0.05, p2 = 0.10, power = 0.9, alternative = "less",
+                 n1_max = 2000L)
+  },
+  fisher_power_fast = function() {
+    fisher_power_fast(p1 = 0.05, p2 = 0.10, power = 0.9,
+                       alternative = "less", n1_max = 2000L)
+  },
+  ss_fxpower        = function() {
+    ss_fxpower(p1 = 0.05, p2 = 0.10, target_power = 0.9, eps = 0)
+  }
+)
+
+for (nm in names(solvers)) {
+  budget_s <- if (nm == "fisher_power") 60 else 15
+  out <- with_budget(function() {
+    t <- system.time(res <- solvers[[nm]]())[["elapsed"]]
+    n1 <- if (!is.null(res$n1)) res$n1 else NA_integer_
+    list(time_s = t, n1 = n1, power = res$power)
+  }, budget_s)
+  if (is.null(out)) {
+    cat(sprintf("%-18s exceeded %ds budget\n", nm, budget_s))
+  } else {
+    cat(sprintf("%-18s %8.3fs  n1 = %-6s power = %.6f\n",
+                nm, out$time_s, out$n1, out$power))
+  }
+}

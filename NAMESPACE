@@ -2,6 +2,7 @@
 
 S3method(print,fxpower)
 export(fisher_power)
+export(fisher_power_fast)
 export(fxpower)
 export(fxpower_r)
 export(net_ci_cpp)

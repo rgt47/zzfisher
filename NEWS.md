@@ -1,3 +1,22 @@
+# zzfisher 0.6.0
+
+* New `fisher_power_fast()`: a faster, numerically identical variant
+  of `fisher_power()`, added as a competing implementation in
+  `inst/benchmarks/benchmark_power_comparison.R`. Two independent
+  fixes, both exact (no eps-trimming): (1) removes a `dhyper()` call
+  that was computed unconditionally every iteration of the one-sided
+  paths despite only the two-sided rejection rule needing it; (2)
+  replaces the linear scan used to solve for `n1` with an exponential
+  (doubling) search followed by bisection, which never evaluates power
+  near `n1_max` unless the search genuinely needs to (a naive
+  bisection against `n1_max` would pay for one expensive evaluation at
+  the cap on its very first step). Verified bitwise identical to
+  `fisher_power()` at every tested configuration; on one benchmark
+  case (p1 = 0.05, p2 = 0.10, power = 0.9, alternative = "less",
+  landing at n1 = 503) `fisher_power_fast()` took 0.76s against
+  `fisher_power()`'s 24.2s, a ~32x speedup from reducing the number of
+  power evaluations during n1-solving alone.
+
 # zzfisher 0.5.0
 
 * New `fisher_power()`: exact power and sample size for the r x 2

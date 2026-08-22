@@ -13,6 +13,7 @@
 R/dispatch.R
 R/htest_wrap.R
 R/rx2_power.R
+R/rx2_power_fast.R
 R/rx2_tree_dp.R
 R/rx2_tree_memo.R
 
@@ -35,3 +36,4 @@ inst/tinytest/test_basic.R
 inst/tinytest/test_ci.R
 inst/tinytest/test_htest.R
 inst/tinytest/test_power.R
+inst/tinytest/test_power_fast.R

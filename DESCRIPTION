@@ -1,6 +1,6 @@
 Package: zzfisher
 Title: Fisher's Exact Test for r x 2 Contingency Tables
-Version: 0.5.0
+Version: 0.6.0
 Authors@R:
     person("Ronald G.", "Thomas", , "rgthomas@ucsd.edu",
            role = c("aut", "cre"),
