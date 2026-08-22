@@ -16,12 +16,29 @@
 #      fisher_power()'s own test suite), so a bisection search reaches
 #      the answer in O(log n1_max) power evaluations instead of
 #      O(n1_max).
+#   3. The two.sided rejection rule was an O(range) elementwise
+#      vapply()/sum() over the whole hypergeometric support for EVERY
+#      candidate x in that same support, i.e. O(range^2) per m. Since
+#      dhyper(xs, ...) is unimodal in x, the set {y : d(y) <= t} for
+#      any threshold t is always the union of a prefix of the
+#      increasing left tail and a suffix of the decreasing right tail.
+#      Precomputing prefix/suffix sums of d once per m, then using
+#      findInterval() (binary search) against each tail to locate
+#      those two boundaries for every x's own threshold at once,
+#      answers the same question in O(range log range) per m instead
+#      of O(range^2) -- and does so fully vectorized, with no explicit
+#      per-x loop.
 #
-# Both changes are exact -- no eps-trimming, no approximation -- so
-# fisher_power_fast() returns bitwise-identical power values to
-# fisher_power() at every (n1, n2, p1, p2, alpha, alternative); only
-# the n1-solving path length differs. Verified in
-# inst/tinytest/test_power_fast.R.
+# Optimizations 1 and 2 are exact -- no eps-trimming, no
+# approximation -- so their contribution to fisher_power_fast()'s
+# result is bitwise identical to fisher_power(). Optimization 3 is
+# also exact in exact arithmetic, but sums the same hypergeometric
+# masses in a different order (prefix-from-the-left plus
+# suffix-from-the-right, rather than one linear scan across the whole
+# support), so floating-point rounding can differ from
+# fisher_power()'s two.sided result at the level of machine epsilon;
+# inst/tinytest/test_power_fast.R checks this with a tolerance rather
+# than expect_identical() for the two.sided case.
 #
 # Caveat inherited from optimization 2: bisection requires power(n1)
 # to be non-decreasing in n1. This holds for the exact test in every
@@ -48,11 +65,30 @@
       less    = phyper(xs, n1, n2, m, lower.tail = TRUE) <= alpha,
       two.sided = {
         d <- dhyper(xs, n1, n2, m)
-        vapply(
-          seq_along(xs),
-          function(i) sum(d[d <= d[i] * (1 + tol)]) <= alpha,
-          logical(1)
+        n_d <- length(d)
+        peak <- which.max(d)
+        pre <- cumsum(d)                # pre[i]  = sum(d[1:i])
+        suf <- rev(cumsum(rev(d)))      # suf[i]  = sum(d[i:n_d])
+        thresh <- d * (1 + tol)
+
+        # left_d (indices 1:peak) is nondecreasing; right_d (indices
+        # (peak+1):n_d) is nonincreasing. findInterval() needs an
+        # ascending vector, so the right tail is searched in reverse.
+        left_d <- d[seq_len(peak)]
+        right_d_asc <- if (peak < n_d) rev(d[(peak + 1L):n_d]) else numeric(0)
+
+        # Number of left-tail / right-tail elements <= thresh[i], for
+        # every i at once: a contiguous prefix of the left tail and a
+        # contiguous suffix of the right tail, by unimodality.
+        count_left <- findInterval(thresh, left_d)
+        count_right <- findInterval(thresh, right_d_asc)
+
+        left_sum <- ifelse(count_left > 0, pre[pmax(count_left, 1L)], 0)
+        right_sum <- ifelse(
+          count_right > 0, suf[n_d - pmax(count_right, 1L) + 1L], 0
         )
+
+        (left_sum + right_sum) <= alpha
       }
     )
 

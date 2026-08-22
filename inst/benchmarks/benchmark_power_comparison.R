@@ -6,9 +6,9 @@
 #   fisher_power_1s  fisher_power(alternative = "less")   -- pure R,
 #                    direct enumeration via phyper()/dbinom() vectors
 #   fisher_power_2s  fisher_power(alternative = "two.sided") -- pure
-#                    R, elementwise unimodal-tail scan (the most
-#                    expensive path: see docs on binary-search
-#                    opportunities not yet implemented)
+#                    R, O(range) elementwise vapply()/sum() scan per
+#                    candidate x, i.e. O(range^2) per m; capped at
+#                    n <= 200 below to stay tractable
 #   fisher_power_fast_1s  fisher_power_fast(alternative = "less") --
 #                    same pure-R algorithm as fisher_power_1s with one
 #                    fix: no wasted dhyper() call on the one-sided
@@ -17,6 +17,15 @@
 #                    one difference. Its other fix (doubling search +
 #                    bisection when solving for n1) only pays off in
 #                    the separate "solve for n1" section below.
+#   fisher_power_fast_2s  fisher_power_fast(alternative = "two.sided")
+#                    -- replaces fisher_power_2s's elementwise scan
+#                    with findInterval() binary search against the
+#                    hypergeometric's two monotonic tails (the peak
+#                    splits the support into a nondecreasing left tail
+#                    and a nonincreasing right tail), O(range log
+#                    range) per m. No n_cap: unlike fisher_power_2s,
+#                    it comfortably reaches the same scale as the
+#                    one-sided paths.
 #   fxpower_exact    fxpower(..., eps = 0)   -- compiled C++,
 #                    mode-centered zigzag traversal, no trimming
 #   fxpower_trim     fxpower(..., eps = 1e-6) -- same kernel with
@@ -99,6 +108,17 @@ algorithms <- list(
                         alpha = cfg$alpha, alternative = "less")$power
     },
     n_cap = Inf, group = "one-sided"
+  ),
+  fisher_power_fast_2s = list(
+    fn = function(cfg) {
+      fisher_power_fast(cfg$n1, cfg$n2, p1 = cfg$p1, p2 = cfg$p2,
+                        alpha = cfg$alpha, alternative = "two.sided")$power
+    },
+    # Unlike fisher_power_2s's O(range^2)-per-m elementwise scan,
+    # fisher_power_fast_2s's findInterval()-based binary search on the
+    # hypergeometric's two monotonic tails is O(range log range) per
+    # m, so it comfortably reaches the same n as the one-sided paths.
+    n_cap = Inf, group = "two-sided"
   ),
   fxpower_exact = list(
     fn = function(cfg) {
@@ -222,6 +242,22 @@ for (cfg in configs) {
   ))
 }
 
+cat("\n--- cross-validation (two-sided group: fast vs original) ---\n")
+two_sided <- comparison[comparison$group == "two-sided" &
+                         is.na(comparison$skipped), ]
+for (cfg in configs) {
+  sub <- two_sided[two_sided$n1 == cfg$n1 & two_sided$n2 == cfg$n2 &
+                    two_sided$p1 == cfg$p1 & two_sided$p2 == cfg$p2, ]
+  if (nrow(sub) < 2) next
+  ref <- sub$power[sub$algorithm == "fisher_power_2s"]
+  fast <- sub$power[sub$algorithm == "fisher_power_fast_2s"]
+  if (length(ref) == 0 || length(fast) == 0) next
+  cat(sprintf(
+    "n1=%d n2=%d p1=%.2f p2=%.2f  |fast - original| = %.2e\n",
+    cfg$n1, cfg$n2, cfg$p1, cfg$p2, abs(fast - ref)
+  ))
+}
+
 # --- speed ratios ------------------------------------------------------
 
 cat("\n--- speed ratios (relative to fxpower_trim) ---\n")
@@ -245,6 +281,14 @@ if (all(c("fxpower_trim", "fisher_power_1s") %in% names(wide_time))) {
     "fisher_power_1s / fxpower_trim:    median %.1fx, max %.1fx\n",
     stats::median(wide_time$fisher_power_1s[ok] / wide_time$fxpower_trim[ok]),
     max(wide_time$fisher_power_1s[ok] / wide_time$fxpower_trim[ok])
+  ))
+}
+if (all(c("fisher_power_fast_2s", "fisher_power_2s") %in% names(wide_time))) {
+  ok <- stats::complete.cases(wide_time[, c("fisher_power_fast_2s", "fisher_power_2s")])
+  cat(sprintf(
+    "fisher_power_2s / fisher_power_fast_2s:  median %.1fx, max %.1fx\n",
+    stats::median(wide_time$fisher_power_2s[ok] / wide_time$fisher_power_fast_2s[ok]),
+    max(wide_time$fisher_power_2s[ok] / wide_time$fisher_power_fast_2s[ok])
   ))
 }
 
