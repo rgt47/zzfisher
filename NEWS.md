@@ -1,3 +1,22 @@
+# zzfisher 0.8.0
+
+* New `ss_fxpower_fast()`: a faster variant of `ss_fxpower()`, using
+  the same doubling (exponential) search + bisection strategy already
+  used by `fisher_power_fast()`'s `n1`-solving path, instead of
+  `ss_fxpower()`'s linear scan incrementing `n2` one at a time. The
+  underlying power evaluator (`fxpower()`) is completely unchanged --
+  this is purely a faster search strategy layered on top of it, and
+  the fix is independent of (and now complete alongside) the
+  `fisher_power_fast()` fix for the pure-R side: the same
+  linear-scan-to-bisection idea now applies to both the `enum` and
+  `mode` power algorithms' sample-size solvers.
+* Verified bitwise identical to `ss_fxpower()` across a grid of
+  targets, including both allocation directions and `k != 1`.
+  Benchmarked: 25x faster at a target n ~ 500 growing to **162x**
+  faster at a target n ~ 8900 (9.7s down to 0.06s) -- a realistic
+  small-effect-size design in the low-event-rate trials this package
+  family targets, not a contrived worst case.
+
 # zzfisher 0.7.0
 
 * `fxpower()` gains a two-sided option (`alternative = c("less",

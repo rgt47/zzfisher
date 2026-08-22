@@ -1,8 +1,8 @@
 # Provenance of the shared fxpower sources.
 # Written by tools/sync-to-zzfisher.sh; do not edit by hand.
 source-repo: rgt47/fisherpowerunequaln
-source-commit: 2cb6a75ef5347d82ba36c894d95bcfe28f55542d
-source-uncommitted-files: 12
+source-commit: 8d9dd06e299133d8b3df71f79eeb0234d5c85b21
+source-uncommitted-files: 5
 target-repo: rgt47/zzfisher
-target-version: 0.6.1
-synced-at: 2026-08-22 12:42 PDT
+target-version: 0.7.0
+synced-at: 2026-08-22 13:15 PDT

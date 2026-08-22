@@ -325,44 +325,60 @@ if (all(c("fxpower_2s_trim", "fisher_power_fast_2s") %in% names(wide_time))) {
 cat(sprintf("\nfull results written to %s\n",
             file.path(out_dir, "power_comparison.csv")))
 
-# --- solve-for-n1: where fisher_power_fast's doubling search and
-# ss_fxpower's compiled-but-still-linear n2 scan actually differ -----
+# --- solve-for-n1: where each family's doubling search and its
+# linear-scan predecessor actually differ ------------------------------
 #
 # The fixed-(n1, n2) grid above only exercises fisher_power_fast's
-# first fix (dropping the wasted dhyper() call); its second fix
-# (doubling search + bisection instead of a linear scan) only shows up
-# when solving for the sample size itself. ss_fxpower() also solves
-# for sample size, but by linearly incrementing n2 one at a time
-# (R/fxpower.R's own documented approach) -- compiled, so each step is
-# cheap, but still O(target n) steps rather than O(log(target n)).
+# first fix (dropping the wasted dhyper() call); the doubling-search
+# fix (bisection instead of a linear scan) only shows up when solving
+# for the sample size itself -- and it now exists on BOTH sides:
+# fisher_power_fast() for the enum/R algorithm, ss_fxpower_fast() for
+# the mode/C++ algorithm. Two target scales are compared: a modest one
+# (n ~ 500) where ss_fxpower's linear scan is already fast in absolute
+# terms, and a small-effect-size one (n ~ 8900, a realistic
+# low-event-rate design) where the linear scan's O(target n) cost
+# becomes a real, multi-second wait.
 
-cat("\n--- solve for n1 (target power = 0.9, p1 = 0.05, p2 = 0.10) ---\n")
+for (target in list(
+  list(label = "target power = 0.9, p1 = 0.05, p2 = 0.10 (n ~ 500)",
+       p1 = 0.05, p2 = 0.10, power = 0.9, n1_max = 2000L, n_max = 2000L),
+  list(label = "target power = 0.9, p1 = 0.05, p2 = 0.06 (n ~ 8900)",
+       p1 = 0.05, p2 = 0.06, power = 0.9, n1_max = 20000L, n_max = 20000L)
+)) {
+  cat(sprintf("\n--- solve for n1 (%s) ---\n", target$label))
 
-solvers <- list(
-  fisher_power      = function() {
-    fisher_power(p1 = 0.05, p2 = 0.10, power = 0.9, alternative = "less",
-                 n1_max = 2000L)
-  },
-  fisher_power_fast = function() {
-    fisher_power_fast(p1 = 0.05, p2 = 0.10, power = 0.9,
-                       alternative = "less", n1_max = 2000L)
-  },
-  ss_fxpower        = function() {
-    ss_fxpower(p1 = 0.05, p2 = 0.10, target_power = 0.9, eps = 0)
-  }
-)
+  solvers <- list(
+    fisher_power = function() {
+      fisher_power(p1 = target$p1, p2 = target$p2, power = target$power,
+                   alternative = "less", n1_max = target$n1_max)
+    },
+    fisher_power_fast = function() {
+      fisher_power_fast(p1 = target$p1, p2 = target$p2, power = target$power,
+                        alternative = "less", n1_max = target$n1_max)
+    },
+    ss_fxpower = function() {
+      ss_fxpower(p1 = target$p1, p2 = target$p2, target_power = target$power,
+                eps = 0, n_max = target$n_max)
+    },
+    ss_fxpower_fast = function() {
+      ss_fxpower_fast(p1 = target$p1, p2 = target$p2,
+                      target_power = target$power, eps = 0,
+                      n_max = target$n_max)
+    }
+  )
 
-for (nm in names(solvers)) {
-  budget_s <- if (nm == "fisher_power") 60 else 15
-  out <- with_budget(function() {
-    t <- system.time(res <- solvers[[nm]]())[["elapsed"]]
-    n1 <- if (!is.null(res$n1)) res$n1 else NA_integer_
-    list(time_s = t, n1 = n1, power = res$power)
-  }, budget_s)
-  if (is.null(out)) {
-    cat(sprintf("%-18s exceeded %ds budget\n", nm, budget_s))
-  } else {
-    cat(sprintf("%-18s %8.3fs  n1 = %-6s power = %.6f\n",
-                nm, out$time_s, out$n1, out$power))
+  for (nm in names(solvers)) {
+    budget_s <- if (nm == "fisher_power") 60 else 15
+    out <- with_budget(function() {
+      t <- system.time(res <- solvers[[nm]]())[["elapsed"]]
+      n1 <- if (!is.null(res$n1)) res$n1 else NA_integer_
+      list(time_s = t, n1 = n1, power = res$power)
+    }, budget_s)
+    if (is.null(out)) {
+      cat(sprintf("%-18s exceeded %ds budget\n", nm, budget_s))
+    } else {
+      cat(sprintf("%-18s %8.3fs  n1 = %-6s power = %.6f\n",
+                  nm, out$time_s, out$n1, out$power))
+    }
   }
 }

@@ -174,6 +174,100 @@ ss_fxpower <- function(p1, p2, alpha = 0.05, target_power = 0.80,
 }
 
 
+#' Sample Size for Fisher's Exact Test with Unequal Groups (fast variant)
+#'
+#' A faster variant of \code{\link{ss_fxpower}} with the same exact
+#' calling convention and numerically identical results, differing
+#' only in cost: solving for \code{n2} uses a doubling (exponential)
+#' search for a bracket followed by bisection, rather than a linear
+#' scan incrementing \code{n2} one at a time from \code{n_start}.
+#' \code{fxpower()} itself (the power evaluator called at each
+#' candidate \code{n2}) is unchanged -- this is purely a faster search
+#' strategy layered on top of it, exactly mirroring the fix already
+#' applied on the pure-R side by
+#' \code{fisher_power_fast(power = ...)} in zzfisher. The two fixes
+#' are independent: this one addresses the search *strategy*, not the
+#' power-evaluation *algorithm*, so it composes with either.
+#'
+#' As with any bisection search, this assumes power is non-decreasing
+#' in \code{n2} at fixed \code{p1}, \code{p2}, \code{alpha}, \code{k}.
+#' \code{ss_fxpower()}'s linear scan does not depend on this
+#' assumption (it simply reports the first \code{n2} it reaches with
+#' sufficient power, scanning in order) and remains the conservative
+#' choice if that mattered for a given design.
+#'
+#' @param p1 Numeric. True event probability in group 1.
+#' @param p2 Numeric. True event probability in group 2.
+#' @param alpha Numeric. One-sided type I error rate.
+#' @param target_power Numeric. Desired power (default 0.80).
+#' @param k Numeric. Allocation ratio n1/n2 (default 1).
+#' @param eps Numeric. Trimming parameter for power calculation.
+#' @param n_max Integer. Largest n2 to search before giving up.
+#' @param alternative One of \code{"less"} or \code{"two.sided"}; see
+#'   \code{\link{fxpower}}.
+#'
+#' @return A list of class \code{"fxpower"} at the minimum sample
+#'   size, plus component \code{n_total} = n1 + n2.
+#'
+#' @examples
+#' ss_fxpower_fast(p1 = 0.05, p2 = 0.06, alpha = 0.05, target_power = 0.9)
+#'
+#' @export
+ss_fxpower_fast <- function(p1, p2, alpha = 0.05, target_power = 0.80,
+                            k = 1, eps = 1e-6, n_max = 100000L,
+                            alternative = c("less", "two.sided")) {
+  alternative <- match.arg(alternative)
+  stopifnot(k > 0)
+
+  power_of <- function(n2) {
+    n1 <- as.integer(ceiling(k * n2))
+    fxpower(n1 = n1, n2 = n2, p1 = p1, p2 = p2, alpha = alpha, eps = eps,
+           alternative = alternative)
+  }
+
+  n_max_int <- as.integer(n_max)
+
+  # Doubling search for a bracket, then bisect inside it -- see
+  # fisher_power_fast()'s identical n1-solving logic (R/rx2_power_fast.R
+  # in the sibling fisherexacttestrx2 workspace) for why this beats a
+  # plain bisection against n_max: each power_of() call costs more for
+  # larger n2, so evaluating at n_max on the first step (as a naive
+  # bisection would) can be far more expensive than the search
+  # actually needs when the true answer is much smaller.
+  lo <- 0L
+  hi <- 1L
+  repeat {
+    if (hi >= n_max_int) {
+      hi <- n_max_int
+      res_hi <- power_of(hi)
+      if (res_hi$power < target_power) {
+        warning("n_max reached without achieving target power")
+        res_hi$n_total <- res_hi$n1 + res_hi$n2
+        return(res_hi)
+      }
+      break
+    }
+    res_hi <- power_of(hi)
+    if (res_hi$power >= target_power) break
+    lo <- hi
+    hi <- hi * 2L
+  }
+
+  while (lo + 1L < hi) {
+    mid <- lo + (hi - lo) %/% 2L
+    if (power_of(mid)$power >= target_power) {
+      hi <- mid
+    } else {
+      lo <- mid
+    }
+  }
+
+  res <- power_of(hi)
+  res$n_total <- res$n1 + res$n2
+  res
+}
+
+
 #' Power Table Across Allocation Ratios
 #'
 #' Compute power for a grid of sample sizes and allocation ratios,
