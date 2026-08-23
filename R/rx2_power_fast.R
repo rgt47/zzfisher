@@ -40,13 +40,95 @@
 # inst/tinytest/test_power_fast.R checks this with a tolerance rather
 # than expect_identical() for the two.sided case.
 #
-# Caveat inherited from optimization 2: bisection requires power(n1)
-# to be non-decreasing in n1. This holds for the exact test in every
-# case checked so far, but discreteness can in principle produce a
-# non-monotonic wiggle that a linear scan (which just takes the first
-# n1 crossing the target, scanning in order) would not be tripped up
-# by. If that mattered for a given design, fisher_power()'s linear
-# scan remains the conservative choice.
+# Caveat inherited from optimization 2 (bisection when solving for n1)
+# -----------------------------------------------------------------
+#
+# Bisection requires power(n1) to be non-decreasing in n1. This is NOT
+# always true: exact test power is well documented to have a
+# "saw-tooth" shape (Chernick & Liu 2002, "The Saw-Toothed Behavior of
+# Power Versus Sample Size and Software Solutions", The American
+# Statistician 56(2):149-155), because the achieved significance level
+# of a discrete test oscillates as n changes, and that oscillation can
+# leak into the power curve as local dips even while the general trend
+# rises. This was confirmed directly for this package's own power
+# function during development: a concrete example at p1 = 0.40,
+# p2 = 0.55, one-sided alpha = 0.05 crosses above a target of 0.80 at
+# n = 144, dips back below for n = 146-151, and only rises permanently
+# past it from n = 152 on.
+#
+# A substantial investigation (see analysis/report/report.Rmd, section
+# "Non-monotonicity of power in n and its effect on sample-size
+# search", in the sibling fisher-power-unequal-n research workspace,
+# for the full write-up) tried four ways to fix or bound this before
+# concluding that plain bisection -- exactly as implemented below,
+# with no correction -- is the right production choice:
+#
+#   1. Plain bisection, no correction: reports a sample size a few
+#      units too LARGE in practice (never too small, and never an
+#      actually-invalid n1 -- the reported n1 always genuinely meets
+#      the target), because it assumes monotonicity to decide which
+#      half of the search range to discard. Every disagreement found
+#      against a linear scan, across several hundred (p1, p2, target
+#      power) combinations explored interactively, was of this same
+#      safe-direction form, off by 2 to 8 units.
+#   2. A rigorous monotone bound derived from Hoeffding's inequality
+#      for hypergeometric (finite-population) sampling: a genuinely
+#      valid lower bound (checked numerically), but far too loose to
+#      be useful -- at p1 = 0.06, p2 = 0.16, target power 0.95, the
+#      true crossing is n1 = 219, but the Hoeffding bound itself does
+#      not clear 0.95 until n1 = 369, a gap of 150 values. Hoeffding's
+#      inequality uses only the range of the random variable, not its
+#      variance, and is known to be loose for exactly this reason.
+#      Tighter (Berry-Esseen-type) bounds were considered but not
+#      pursued: no bound on the saw-tooth's magnitude or period appears
+#      in Chernick & Liu (2002) or in a 2026 paper characterizing the
+#      analogous non-monotonicity in Monte Carlo permutation test
+#      power, so deriving one is a genuine, currently-unpublished
+#      research question, not a matter of applying a known formula.
+#   3. A multi-level (iteratively narrowing) coarse-grid isotonic
+#      regression search: cheaper than approach 4, but WRONG on the
+#      p1 = 0.40, p2 = 0.55 case above -- it returned n1 = 152 instead
+#      of 144, missing the isolated 2-unit-wide spike entirely, because
+#      each successive re-fit narrows the search range based on a
+#      SMOOTHED (pool-adjacent-violators) estimate at shrinking scales,
+#      and a narrow spike can get pooled together with a lower
+#      neighbor and averaged below target before the narrowing ever
+#      reaches fine enough resolution to see it individually.
+#   4. A single-level coarse grid (e.g. 15-30 points) + isotonic
+#      regression + exhaustive scan of the bracket the smoothed fit
+#      crosses target in: this looked initially promising (correct on
+#      6 of 6 known non-monotonicity cases) when tested against an
+#      arbitrary FIXED grid spanning the whole [1, n1_max] range.  But
+#      that test was not representative: a fixed full-range grid is
+#      not usable in production, because a generously large n1_max
+#      would force sampling points arbitrarily close to n1_max even
+#      when the true answer is tiny (the exact problem bisection's
+#      doubling phase exists to avoid). Once correctly combined with a
+#      doubling phase (sampling the coarse grid only within the
+#      doubling-derived bracket, as production code must), it stopped
+#      reliably beating plain bisection: it missed the p1 = 0.40,
+#      p2 = 0.55 case at every grid density tried (15, 30, and 60
+#      points all returned 152, never 144), and increasing the grid
+#      density even broke a previously-correct case (p1 = 0.06,
+#      p2 = 0.21 went from correct at 15-30 points to wrong, off by 2,
+#      at 60). The apparent success in the first test was an artifact
+#      of that specific fixed grid's alignment, not a property of the
+#      method.
+#
+# No approach tried improves on plain bisection's worst case once
+# tested under realistic conditions, and this matches the literature:
+# no published bound on the saw-tooth's magnitude or period was found
+# (not in the original Chernick & Liu paper, nor a 2026 paper on the
+# analogous permutation-test phenomenon), and SAS's PROC POWER
+# documentation -- for exactly this "sawtooth power function" problem
+# -- recommends manual inspection of a power-vs-n plot rather than an
+# automated guarantee. Plain bisection is retained here as the
+# production default: it is fast, its failure mode is safe-direction
+# (never reports an n1 that doesn't genuinely meet the target, only
+# occasionally one a few units larger than the true minimum), and nothing
+# tried does better without giving something else up. fisher_power()'s
+# linear scan remains the fully conservative choice, at substantial
+# extra cost, for anyone who needs the true minimum ruled out exactly.
 
 .rx2_exact_power_fast <- function(n1, n2, p1, p2, alpha, alternative, tol) {
   b1 <- dbinom(0:n1, n1, p1)
@@ -110,6 +192,24 @@
 #' benchmarking framework.
 #'
 #' @inheritParams fisher_power
+#' @details
+#' Exact test power is not always non-decreasing in \code{n1}
+#' (Chernick & Liu 2002; confirmed directly for this power function
+#' during development). When solving for \code{n1}, bisection can
+#' therefore report a value a few units larger than the smallest
+#' \code{n1} that truly meets the target -- always a valid \code{n1}
+#' in its own right, never an underpowered one, but not always the
+#' minimum. Several corrections were investigated (a windowed check, a
+#' rigorous Hoeffding-inequality bound, and two isotonic-regression
+#' variants) and rejected: none reliably improved on plain bisection
+#' once tested under realistic conditions, and one was less reliable
+#' despite being far more expensive. See the comments at the top of
+#' \code{R/rx2_power_fast.R} for the full account of what was tried,
+#' and \code{analysis/report/report.Rmd}'s "Non-monotonicity of power
+#' in n" section (sibling \code{fisher-power-unequal-n} research
+#' workspace) for the complete write-up. \code{\link{fisher_power}}'s
+#' linear scan remains the fully conservative choice when this
+#' residual risk matters for a specific design.
 #' @return An object of class \code{"power.htest"}, identical in
 #'   structure to \code{\link{fisher_power}}'s return value.
 #' @examples

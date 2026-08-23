@@ -1,3 +1,25 @@
+# zzfisher 0.8.1
+
+* No functional change to `fisher_power_fast()`'s output: it still
+  solves for `n1` by exponential (doubling) search then bisection,
+  exactly as in 0.6.0-0.8.0. This release documents, in detail, an
+  investigation into whether that bisection could be made robust to
+  the power function's known non-monotonicity in `n1` (see NEWS for
+  0.7.0/0.8.0 and `analysis/report/report.Rmd`'s "Non-monotonicity of
+  power in n" section in the sibling `fisher-power-unequal-n` research
+  workspace for the full account). Four corrections were tried --  a
+  windowed check, a rigorous Hoeffding-inequality bound, and two
+  isotonic-regression variants -- and all four were rejected: none
+  reliably improved on plain bisection's worst case once tested under
+  realistic conditions (sampling within a doubling-derived bracket
+  rather than an arbitrary fixed range), and one (single-level
+  isotonic regression) appeared to fix every known case in an initial
+  test, then was found to fail once correctly wired into the
+  production search path -- an artifact of that test's grid alignment,
+  not a property of the method. `R/rx2_power_fast.R`'s header comment
+  now documents all four attempts and why each was rejected, so the
+  investigation is not repeated blind in the future.
+
 # zzfisher 0.8.0
 
 * New `ss_fxpower_fast()`: a faster variant of `ss_fxpower()`, using

@@ -60,6 +60,25 @@ linear scan from 1. Added as a competing pure-R implementation
 alongside \code{\link{fisher_power}} in zzfisher's power-function
 benchmarking framework.
 }
+\details{
+Exact test power is not always non-decreasing in \code{n1}
+(Chernick & Liu 2002; confirmed directly for this power function
+during development). When solving for \code{n1}, bisection can
+therefore report a value a few units larger than the smallest
+\code{n1} that truly meets the target -- always a valid \code{n1}
+in its own right, never an underpowered one, but not always the
+minimum. Several corrections were investigated (a windowed check, a
+rigorous Hoeffding-inequality bound, and two isotonic-regression
+variants) and rejected: none reliably improved on plain bisection
+once tested under realistic conditions, and one was less reliable
+despite being far more expensive. See the comments at the top of
+\code{R/rx2_power_fast.R} for the full account of what was tried,
+and \code{analysis/report/report.Rmd}'s "Non-monotonicity of power
+in n" section (sibling \code{fisher-power-unequal-n} research
+workspace) for the complete write-up. \code{\link{fisher_power}}'s
+linear scan remains the fully conservative choice when this
+residual risk matters for a specific design.
+}
 \examples{
 fisher_power_fast(n1 = 40, n2 = 40, p1 = 0.3, p2 = 0.1)
 fisher_power_fast(p1 = 0.1, p2 = 0.3, power = 0.8)
