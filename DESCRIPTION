@@ -16,7 +16,7 @@ Description: Multiple algorithmic implementations of Fisher's exact test
     (1993) Algorithm AS 280 and its generalization to unequal group
     sizes.
 License: GPL (>= 3)
-Imports: Rcpp
+Imports: Rcpp, stats
 LinkingTo: Rcpp
 Suggests: microbenchmark, tinytest
 Encoding: UTF-8
