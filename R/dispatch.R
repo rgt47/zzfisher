@@ -22,10 +22,39 @@
 # Compiled internals are auto-generated into R/RcppExports.R by
 # Rcpp::compileAttributes().
 
+# Entries must be counts. Without this the kernels disagree on
+# malformed input instead of refusing it: a table containing -1
+# returned 0.25 from tree_dp and tree_memo_c, 0 from net_vander_cpp,
+# and an error from net_sweep_cpp, so a value that is not a
+# contingency table produced three different plausible-looking
+# p-values. Fractional entries returned 1 from all four.
+.check_counts <- function(dat) {
+  if (!is.numeric(dat)) {
+    stop('dat must be a numeric or integer table of counts',
+         call. = FALSE)
+  }
+  if (anyNA(dat)) {
+    stop('dat must not contain NA or NaN', call. = FALSE)
+  }
+  if (any(!is.finite(dat))) {
+    stop('dat must not contain infinite values', call. = FALSE)
+  }
+  if (any(dat < 0)) {
+    stop('dat must not contain negative counts', call. = FALSE)
+  }
+  if (any(dat != trunc(dat))) {
+    stop('dat must contain whole-number counts', call. = FALSE)
+  }
+  invisible(dat)
+}
+
 .infer_shape <- function(dat) {
   d <- dim(dat)
   if (is.null(d) || !(length(d) %in% c(2L, 3L)))
     stop('dat must be a 2D matrix or 3D array', call. = FALSE)
+  if (d[1L] < 2L || d[2L] < 2L)
+    stop('dat must have at least 2 rows and 2 columns', call. = FALSE)
+  .check_counts(dat)
   if (length(d) == 3L) return('rxck')
   if (d[2L] == 2L) 'rx2' else 'rxc'
 }
@@ -216,6 +245,9 @@ net_ci_cpp <- function(dat) {
   if (length(dim(dat)) != 3) {
     stop('net_ci_cpp requires a 3-dimensional array')
   }
+  # This entry point routes past .infer_shape(), so it validates the
+  # counts itself.
+  .check_counts(dat)
   pval <- .rxck_net_ci_cpp(dat)
   make_htest(pval, dname, '[net_ci_cpp]')
 }

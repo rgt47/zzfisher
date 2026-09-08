@@ -1,3 +1,66 @@
+# zzfisher 0.9.0
+
+## Correctness fixes
+
+* **The kernels validate their input, which closes a segfault.**
+  Nothing checked that `dat` held counts. Passing a table containing
+  `Inf` crashed the R session outright in two of the nine kernels:
+  `tree_memo_cpp` and `tree_dp_cpp` both terminated with a
+  segmentation fault (exit 139) from inside the compiled kernel,
+  rather than raising an error. `net_vander_cpp` returned `NaN` and
+  the rest raised errors, so the same input produced three different
+  outcomes and one hard crash.
+
+  Negative counts were worse in a quieter way. A table containing
+  `-1` was accepted by 8 of the 9 kernels and returned a
+  plausible-looking p-value that differed between them: 0.25 from the
+  tree kernels, 0 from the network kernels. A large negative count
+  gave 1, `NaN`, or an error depending on which implementation was
+  called. Fractional counts were accepted by all nine and silently
+  returned 1.
+
+  `.check_counts()` now rejects non-numeric, missing, infinite,
+  negative and fractional entries, and `.infer_shape()` additionally
+  requires at least two rows and two columns. Every user-facing
+  dispatcher routes through one of the two, `net_ci_cpp()` included.
+  Zero cells and empty rows remain accepted: those are legitimate
+  count tables.
+
+  The compiled kernels themselves are unchanged. The guard sits at the
+  R boundary, which is where every exported entry point passes, but
+  the underlying C++ still reads out of bounds if reached with such
+  input by other means. That belongs with the sanitizer and valgrind
+  work rather than here.
+
+## Tests
+
+* `test_basic.R` held a single `expect_true(TRUE)`. It now asserts
+  what the package is actually for: that all nine kernels agree with
+  `stats::fisher.test()` and with each other across an exhaustive set
+  of 2x2 tables and a sample of r x 2 and r x c shapes; that all nine
+  refuse malformed input identically; that zero cells and empty rows
+  are still accepted; and that `net_ci_cpp()` with `k = 1` reproduces
+  the ordinary r x c Fisher exact test, as documented.
+* Suite grows from 119 assertions to 1590.
+
+## Verified unchanged
+
+Checked during review and found correct, with no change required:
+
+* All nine p-value kernels agree with `stats::fisher.test()` to
+  5e-15 over 1175 exhaustive 2x2 tables, and to 3e-14 over sampled
+  3x2, 4x2 and 5x2 tables.
+* `fxpower()` reproduces exact power computed by independent
+  enumeration over the full lattice, under both `less` and
+  `two.sided`, to six decimal places.
+* `ss_fxpower()` returns the smallest n meeting the target power:
+  power(n) is above target and power(n-1) below it in every
+  configuration checked.
+* `fxpower_r()` and `fxpower()` differ only by the documented `eps`
+  truncation: at `eps = 1e-12` they agree to 3e-13.
+* `net_ci_cpp()` with `k = 1` matches `stats::fisher.test()` over 80
+  random r x c tables.
+
 # zzfisher 0.8.1
 
 * No functional change to `fisher_power_fast()`'s output: it still
