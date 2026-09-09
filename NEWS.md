@@ -1,3 +1,41 @@
+# zzfisher 0.9.2
+
+## Correctness fixes
+
+* **`net_dp_cpp()` and `net_vander_cpp()` returned `NaN` above about a
+  thousand observations.** Both multiply binomial coefficients directly
+  rather than working in logs, which is what makes the Vandermonde
+  bulk-sum identity usable but caps the table size:
+  `choose(1020, 510)` is 2.8e305 and `choose(1030, 515)` overflows a
+  double to `Inf`. Past that the products became `Inf` and the ratios
+  `NaN`, and the `NaN` was returned as the p-value. Both now refuse a
+  total above 1020, giving the reason and naming `net_sweep_cpp()` and
+  `tree_memo()`, which work in logs and have no such limit.
+
+  The failure was at least abrupt rather than gradual: checked against
+  `stats::fisher.test()` on both balanced and unbalanced tables, the
+  two kernels are exact to 1e-10 at a total of 1000 and produce `NaN`
+  from 1200, with no band in between where they returned a finite but
+  wrong answer.
+
+## Compiled-code audit
+
+Every fixed-size array in `src/` was checked against the guard that
+bounds its index. All eleven kernels bound `MAX_ROWS`; `rxc_*`,
+`rxck_*` and `rx2_net_sweep.cpp` use no fixed arrays at all. The only
+missing bound was the one fixed in 0.9.1.
+
+Two things were checked and found correct, and are recorded so they are
+not re-investigated:
+
+* The memoisation key in `rx2_tree_memo_cpp.cpp` is `k * 10001 + c1`
+  while `MAX_N` is also 10001, which looks like an off-by-one that
+  would collide `(k, 10001)` with `(k + 1, 0)`. It cannot: the column
+  totals are swapped so that `c[0] <= c[1]`, so `c1` never exceeds
+  `n / 2`, and the multiplier is comfortably clear of it.
+* `k * 10001` with `k` bounded by `MAX_ROWS` of 20 cannot overflow an
+  `int`.
+
 # zzfisher 0.9.1
 
 ## Correctness fixes

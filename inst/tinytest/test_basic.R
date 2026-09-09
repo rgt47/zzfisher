@@ -129,3 +129,23 @@ for (f in kern) {
     tolerance = 1e-10,
     info = paste(f, "still agrees with fisher.test on a moderate table"))
 }
+
+# net_dp_cpp() and net_vander_cpp() multiply binomial coefficients
+# directly rather than working in logs, which is what makes the
+# bulk-sum identity usable but caps the table size: choose(1020, 510)
+# is 2.8e305 and choose(1030, 515) overflows a double. Past that the
+# products became Inf, the ratios NaN, and a NaN came back as the
+# p-value. The limit is now refused with its reason.
+ok_size <- matrix(c(270, 230, 230, 270), 2)
+for (f in c("net_dp_cpp", "net_vander_cpp")) {
+  expect_equal(get(f)(ok_size)$p.value,
+               stats::fisher.test(ok_size)$p.value, tolerance = 1e-10,
+    info = paste(f, "is exact at a total of 1000"))
+  expect_error(get(f)(matrix(rep(500, 4), 2)), "exceeds 1020",
+    info = paste(f, "refuses a total beyond its overflow limit"))
+}
+# The kernels that work in logs carry on past it.
+for (f in c("net_sweep_cpp", "tree_memo", "tree_memo_c", "tree_s4_c")) {
+  expect_true(is.finite(get(f)(matrix(rep(6000, 4), 2))$p.value),
+    info = paste(f, "handles a large table, working in logs"))
+}

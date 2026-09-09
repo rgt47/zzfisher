@@ -18,6 +18,9 @@
 using namespace Rcpp;
 
 #define MAX_ROWS 20
+// Largest total count for which choose(n, n/2) stays finite
+// as a double: choose(1020, 510) = 2.8e305, choose(1030, 515) = Inf.
+#define MAX_TOTAL_EXACT 1020
 
 namespace {
 
@@ -143,6 +146,18 @@ double rx2_net_dp_cpp(IntegerMatrix dat) {
         s.c[0] += dat(i, 0);
         s.c[1] += dat(i, 1);
     }
+    // This kernel multiplies binomial coefficients directly rather than
+    // working in logs, which is what makes the bulk-sum identity usable
+    // but caps the table size: choose(1020, 510) is 2.8e305 and
+    // choose(1030, 515) overflows a double to Inf. Past that the
+    // products became Inf and the ratios NaN, and a NaN was returned as
+    // the p-value. Refuse with the reason instead, and name the kernel
+    // that has no such limit.
+    if (s.n > MAX_TOTAL_EXACT)
+        Rcpp::stop("Total count %d exceeds %d, above which this kernel's "
+                   "binomial products overflow a double; use "
+                   "net_sweep_cpp() or tree_memo(), which work in logs",
+                   s.n, MAX_TOTAL_EXACT);
 
     int order[MAX_ROWS];
     for (int i = 0; i < s.m; i++) order[i] = i;
