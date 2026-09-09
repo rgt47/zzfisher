@@ -80,3 +80,52 @@ for (i in 1:20) {
 }
 expect_error(net_ci_cpp(array(c(-1, 1, 1, 3), dim = c(2, 2, 1))),
   info = "net_ci_cpp validates its counts too")
+
+# --- large-table regressions -------------------------------------
+#
+# lfact is a fixed array of MAX_N + 1 doubles and its fill loop runs to
+# the table's total count, so a total above MAX_N wrote past the end of
+# the struct. rx2_tree_dp.cpp had carried a bounds check all along;
+# rx2_tree_memo_cpp.cpp had lost it. A 2x2 table of 6000s -- 24000
+# observations, an unremarkable size for a clinical dataset, with every
+# count a positive whole number -- segfaulted the session.
+#
+# Two of the network kernels returned NaN on the same table. NaN in a
+# p-value slot is worse than an error: it compares FALSE against any
+# threshold, so the test silently stops rejecting and nothing in the
+# output says so.
+big <- matrix(rep(6000, 4), 2)
+for (f in kern) {
+  res <- tryCatch(get(f)(big), error = function(e) e)
+  if (inherits(res, "error")) {
+    expect_true(nzchar(conditionMessage(res)),
+      info = paste(f, "refuses a large table with a message"))
+  } else {
+    expect_true(is.finite(res$p.value),
+      info = paste(f, "returns a finite p-value on a large table"))
+    expect_true(res$p.value >= 0 && res$p.value <= 1,
+      info = paste(f, "returns a probability on a large table"))
+  }
+}
+
+# Whatever the kernel does, it must not hand back a non-finite value
+# dressed as a p-value: make_htest() is the single point every kernel
+# returns through.
+expect_error(zzfisher:::make_htest(NaN, "d"), "rather than a p-value",
+  info = "NaN is refused as a p-value")
+expect_error(zzfisher:::make_htest(NA_real_, "d"), "rather than a p-value",
+  info = "NA is refused as a p-value")
+expect_error(zzfisher:::make_htest(Inf, "d"), "rather than a p-value",
+  info = "Inf is refused as a p-value")
+expect_error(zzfisher:::make_htest(1.5, "d"), "not a probability",
+  info = "a value above 1 is refused")
+expect_equal(zzfisher:::make_htest(0.25, "d")$p.value, 0.25,
+  info = "an ordinary p-value passes through unchanged")
+
+# Tables the kernels can handle must still be handled.
+small <- matrix(c(30, 20, 20, 30), 2)
+for (f in kern) {
+  expect_equal(get(f)(small)$p.value, stats::fisher.test(small)$p.value,
+    tolerance = 1e-10,
+    info = paste(f, "still agrees with fisher.test on a moderate table"))
+}

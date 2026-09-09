@@ -1,3 +1,40 @@
+# zzfisher 0.9.1
+
+## Correctness fixes
+
+* **`tree_memo_cpp()` overflowed a fixed buffer on an ordinary large
+  table.** `lfact` is a fixed array of `MAX_N + 1` doubles inside the
+  state struct, and the loop that fills it runs to the table's total
+  count. Nothing checked that total against `MAX_N`, so any table
+  summing to more than 10,001 wrote past the end of the struct. A 2x2
+  table of 6000s -- 24,000 observations, every count a positive whole
+  number, an unremarkable size for a clinical dataset -- terminated the
+  R session with a segmentation fault. The sibling kernel in
+  `rx2_tree_dp.cpp` has carried exactly this bounds check all along;
+  this one had lost it. The check is restored at both entry points, and
+  a table that is too large is now refused with the same message the
+  sibling gives.
+
+* **Two network kernels returned `NaN` as a p-value.** On the same
+  table `net_dp_cpp()` and `net_vander_cpp()` returned `NaN` rather
+  than failing. `NaN` in a p-value slot is worse than an error: it
+  compares `FALSE` against any threshold, so a test silently stops
+  rejecting and nothing in the output says so. `make_htest()`, the
+  single point every kernel returns through, now refuses a result that
+  is not a finite number in [0, 1].
+
+  The nine kernels previously disagreed four ways on the same input:
+  one crashed, two returned `NaN`, one refused with a clear message,
+  and five computed the answer. They now either compute it or refuse.
+
+## Tests
+
+* `test_basic.R` gains a large-table section covering all nine kernels,
+  the `make_htest()` guard against `NaN`, `NA`, `Inf` and out-of-range
+  values, and a check that moderate tables still agree with
+  `stats::fisher.test()`.
+* Suite grows from 1590 assertions to 1617.
+
 # zzfisher 0.9.0
 
 ## Correctness fixes

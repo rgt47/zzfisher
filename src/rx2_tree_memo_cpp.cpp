@@ -407,6 +407,13 @@ double rx2_tree_memo_cpp(IntegerMatrix dat) {
         s.c[0] += dat(i, 0);
         s.c[1] += dat(i, 1);
     }
+    // lfact is a fixed array of MAX_N + 1 doubles and the fill loop
+    // below runs to s.n, so a table whose total exceeds MAX_N wrote
+    // past the end of the struct. The sibling kernel in
+    // rx2_tree_dp.cpp has carried this check all along; this one lost
+    // it. A 2x2 table of 6000s -- 24000 observations, an unremarkable
+    // size for a clinical dataset -- segfaulted here.
+    if (s.n > MAX_N) Rcpp::stop("Total count too large (max %d)", MAX_N);
 
     bool flipped = s.c[0] > s.c[1];
     if (flipped) std::swap(s.c[0], s.c[1]);
@@ -487,6 +494,13 @@ Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat) {
         s.c[0] += dat(i, 0);
         s.c[1] += dat(i, 1);
     }
+    // lfact is a fixed array of MAX_N + 1 doubles and the fill loop
+    // below runs to s.n, so a table whose total exceeds MAX_N wrote
+    // past the end of the struct. The sibling kernel in
+    // rx2_tree_dp.cpp has carried this check all along; this one lost
+    // it. A 2x2 table of 6000s -- 24000 observations, an unremarkable
+    // size for a clinical dataset -- segfaulted here.
+    if (s.n > MAX_N) Rcpp::stop("Total count too large (max %d)", MAX_N);
 
     bool flipped = s.c[0] > s.c[1];
     if (flipped) std::swap(s.c[0], s.c[1]);
