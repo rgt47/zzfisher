@@ -1,4 +1,4 @@
-# zzcollab r-package.yml v0.3.0
+# zzcollab r-package.yml v0.3.0 (zzcollab 257e8ad)
 #
 # Self-adapting package check. A detect job picks the environment from artifact
 # presence, then the matching check job runs:
@@ -22,7 +22,7 @@ jobs:
     outputs:
       nix: ${{ steps.d.outputs.nix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: d
         run: |
           if [ -f flake.nix ]; then
@@ -47,7 +47,7 @@ jobs:
       _R_CHECK_FORCE_SUGGESTS_: "false"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -72,7 +72,7 @@ jobs:
       # --- renv backend: restore the pinned library ---
       - name: Cache renv packages
         if: steps.mode.outputs.renv == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/R/renv
           key: renv-${{ hashFiles('renv.lock') }}
@@ -107,6 +107,14 @@ jobs:
                                        lib = Sys.getenv('CI_TOOLS_LIB'),
                                        repos = 'https://cloud.r-project.org')"
 
+      # Per-repository setup that must precede the check (warming a cache,
+      # fetching a test fixture) goes in an optional tools/ci/pre-check
+      # script rather than in an edited copy of this workflow, so every
+      # compendium runs the same workflow. It runs with CI_TOOLS_LIB set.
+      - name: Pre-check hook (tools/ci/pre-check)
+        if: hashFiles('tools/ci/pre-check') != ''
+        run: bash tools/ci/pre-check
+
       # CI_TOOLS_LIB now holds renv, the restored dependencies, and the check
       # tools; hand it to the check subprocess via libpath so every Import
       # resolves (not just those already in the container base image).
@@ -121,12 +129,24 @@ jobs:
             rcmdcheck::rcmdcheck(args = c('--no-manual', '--no-vignettes'), \
               build_args = '--no-build-vignettes', error_on = 'error', libpath = libs)"
 
+      # No continue-on-error: a failing assertion must fail the job. The
+      # package is loaded first: run_test_dir() does not load it, so tests
+      # calling package functions would otherwise fail with 'could not find
+      # function'.
       - name: Run tests
-        continue-on-error: true
         run: |
           Rscript -e "
             .libPaths(c(Sys.getenv('CI_TOOLS_LIB'), .libPaths()))
             if (dir.exists('inst/tinytest')) {
+              if (requireNamespace('pkgload', quietly = TRUE)) {
+                pkgload::load_all('.', quiet = TRUE)
+              } else {
+                lib <- tempfile('pkglib'); dir.create(lib)
+                install.packages('.', lib = lib, repos = NULL, type = 'source')
+                .libPaths(c(lib, .libPaths()))
+                library(read.dcf('DESCRIPTION', 'Package')[[1]],
+                        character.only = TRUE)
+              }
               out <- tinytest::run_test_dir('inst/tinytest')
               if (any(!as.logical(out))) quit(status = 1)
             } else {
@@ -149,7 +169,7 @@ jobs:
     if: needs.detect.outputs.nix == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -164,10 +184,18 @@ jobs:
             R CMD check --no-manual *.tar.gz'
 
       - name: Run tests (nix develop)
-        continue-on-error: true
         run: |
           nix develop -c Rscript -e '
             if (dir.exists("inst/tinytest")) {
+              if (requireNamespace("pkgload", quietly = TRUE)) {
+                pkgload::load_all(".", quiet = TRUE)
+              } else {
+                lib <- tempfile("pkglib"); dir.create(lib)
+                install.packages(".", lib = lib, repos = NULL, type = "source")
+                .libPaths(c(lib, .libPaths()))
+                library(read.dcf("DESCRIPTION", "Package")[[1]],
+                        character.only = TRUE)
+              }
               out <- tinytest::run_test_dir("inst/tinytest")
               if (any(!as.logical(out))) quit(status = 1)
             } else {
