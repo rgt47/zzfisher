@@ -110,16 +110,19 @@ for (f in kern) {
 
 # Whatever the kernel does, it must not hand back a non-finite value
 # dressed as a p-value: make_htest() is the single point every kernel
-# returns through.
-expect_error(zzfisher:::make_htest(NaN, "d"), "rather than a p-value",
+# returns through. It is internal, and this file is shared between two
+# packages with different names, so it is taken from the namespace of an
+# exported kernel rather than through a named pkg::: call.
+make_htest <- get("make_htest", envir = environment(tree_dp))
+expect_error(make_htest(NaN, "d"), "rather than a p-value",
   info = "NaN is refused as a p-value")
-expect_error(zzfisher:::make_htest(NA_real_, "d"), "rather than a p-value",
+expect_error(make_htest(NA_real_, "d"), "rather than a p-value",
   info = "NA is refused as a p-value")
-expect_error(zzfisher:::make_htest(Inf, "d"), "rather than a p-value",
+expect_error(make_htest(Inf, "d"), "rather than a p-value",
   info = "Inf is refused as a p-value")
-expect_error(zzfisher:::make_htest(1.5, "d"), "not a probability",
+expect_error(make_htest(1.5, "d"), "not a probability",
   info = "a value above 1 is refused")
-expect_equal(zzfisher:::make_htest(0.25, "d")$p.value, 0.25,
+expect_equal(make_htest(0.25, "d")$p.value, 0.25,
   info = "an ordinary p-value passes through unchanged")
 
 # Tables the kernels can handle must still be handled.
