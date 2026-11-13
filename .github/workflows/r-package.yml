@@ -1,4 +1,4 @@
-# zzcollab r-package.yml v0.3.0 (zzcollab b80c1fd)
+# zzcollab r-package.yml v0.3.0 (zzcollab 7a8f8a1)
 #
 # Self-adapting package check. A detect job picks the environment from artifact
 # presence, then the matching check job runs:
@@ -43,7 +43,8 @@ jobs:
       ZZCOLLAB_CONTAINER: "true"
       CI_TOOLS_LIB: "/tmp/ci-tools"
       R_LIBS_USER: "/tmp/ci-tools"
-      RENV_CONFIG_REPOS_OVERRIDE: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+      # RENV_CONFIG_REPOS_OVERRIDE is set by the "Select package
+      # repository" step, not here, so it can follow the Dockerfile.
       _R_CHECK_FORCE_SUGGESTS_: "false"
       # renv and pak resolve GitHub-hosted packages through the GitHub API;
       # unauthenticated, that is 60 requests an hour per runner IP and
@@ -56,6 +57,25 @@ jobs:
       - name: Install system dependencies
         run: |
           apt-get update && apt-get install -y jq libcurl4-openssl-dev libssl-dev libxml2-dev cmake
+
+      # Binaries must come from the same Posit snapshot the project image
+      # builds from. A binary from a later snapshot can be compiled against
+      # a newer version of a package the lockfile pins older (Rfast built
+      # against RcppParallel 6 beside a pinned 5.1.11-2 fails to load), so
+      # a check against "latest" can fail where the image works. The
+      # Dockerfile's dated snapshot is used when it pins one; the runner
+      # container is noble, so the date is applied to the noble binaries.
+      - name: Select package repository
+        run: |
+          base=https://packagemanager.posit.co/cran/__linux__/noble
+          snap=''
+          if [ -f Dockerfile ]; then
+            snap=$(grep -oE 'packagemanager\.posit\.co/cran/(__linux__/[a-z]+/)?[0-9]{4}-[0-9]{2}-[0-9]{2}' Dockerfile \
+              | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}$' || true)
+          fi
+          repo="$base/${snap:-latest}"
+          echo "RENV_CONFIG_REPOS_OVERRIDE=$repo" >> "$GITHUB_ENV"
+          echo "Package repository: $repo${snap:+ (pinned by Dockerfile)}"
 
       - name: Detect package backend
         id: mode
@@ -79,9 +99,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/R/renv
-          key: renv-${{ hashFiles('renv.lock') }}
+          # Keyed by repository too, so binaries cached from one snapshot
+          # never seed a restore against another.
+          key: renv-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-${{ hashFiles('renv.lock') }}
           restore-keys: |
-            renv-
+            renv-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-
 
       # Restore the pinned library into the fixed CI_TOOLS_LIB (not renv's
       # default project library), so the exact folder that receives the packages
