@@ -10,6 +10,14 @@
 
 Multiple algorithmic implementations of Fisher's exact test for r x 2 contingency tables, with first-generation kernels for r x c tables and r x c x k tables under the no-three-way-interaction model. Includes tree-based (mode-centric traversal with pruning) and network-based (state-space enumeration with Vandermonde bulk-sum) approaches in pure R, C, and C++. User-facing functions dispatch on the shape of the input table. Also includes exact power and sample size calculation for the 2 x 2 test, following Conlon and Thomas (1993) Algorithm AS 280 and its generalization to unequal group sizes.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/rgt47/zzfisher}
+  \item Report bugs at \url{https://github.com/rgt47/zzfisher/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Ronald G. Thomas \email{rgthomas@ucsd.edu} (\href{https://orcid.org/0000-0003-1686-4965}{ORCID})
 

@@ -1,8 +1,8 @@
 # Provenance of the shared kernel sources.
 # Written by tools/sync-to-zzfisher.sh; do not edit by hand.
 source-repo: rgt47/fisherexacttestrx2
-source-commit: 8b372ada01a940f9865f49a4d6271fb0e30613ef
-source-uncommitted-files: 2
+source-commit: 6b1decb065c419289a21bb6f3f6e28732526195f
+source-uncommitted-files: 0
 target-repo: rgt47/zzfisher
-target-version: 0.8.0
-synced-at: 2026-08-23 11:19 PDT
+target-version: 0.9.2
+synced-at: 2026-11-12 16:43 PST
