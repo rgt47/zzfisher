@@ -37,11 +37,14 @@
 //      at the first value not exceeding the threshold.
 //
 // All bound comparisons are performed in log space
-// (log_thresh = log p_obs + log1p(tol)); the subtraction of
-// complement mass remains in probability space via the conditional
-// hypergeometric factorization (the dhyper factors of a subtree's
-// completions sum to one, so the whole subtree's mass equals the
-// prefix product).
+// (log_thresh = log p_obs + log1p(tol)). The p-value is accumulated
+// directly as the mass of S, in probability space, via the
+// conditional hypergeometric factorization (the dhyper factors of a
+// subtree's completions sum to one, so the whole subtree's mass
+// equals the prefix product). Children skipped by the sibling
+// cutoff lie in S, so their masses are summed along the pmf
+// recurrence without descent. The earlier form p = 1 - mass(U)
+// cancelled catastrophically for p below about 1e-13.
 //
 // Row sort ascending by margin and column flip to the smaller
 // first column are unchanged from the previous design.
@@ -146,6 +149,59 @@ static double hp_step_down(double hp, int prev, int c1, int c2, int rk) {
            ((double)(c1 - prev + 1) * (double)(rk - prev + 1));
 }
 
+/* Sum of the dhyper pmf over y = prev + dir, prev + 2 dir, ...,
+ * y_end, given hp = pmf(prev). Every child in such a run lies in
+ * S, so its whole subtree mass is added without descent. The pmf
+ * is log-concave, so once a step ratio rho falls below 1/2 the
+ * remaining terms are bounded by hp rho / (1 - rho) <= hp, and the
+ * walk stops when hp is negligible against the running sum. */
+static double tail_mass(double hp, int prev, int y_end, int dir,
+                        int c1, int c2, int rk) {
+    double sum = 0.0;
+    int y;
+    for (y = prev + dir; dir > 0 ? y <= y_end : y >= y_end;
+         y += dir) {
+        double nx = dir > 0 ? hp_step_up(hp, prev, c1, c2, rk)
+                            : hp_step_down(hp, prev, c1, c2, rk);
+        double rho = hp > 0.0 ? nx / hp : 0.0;
+        hp = nx;
+        prev = y;
+        sum += hp;
+        if (rho < 0.5 && hp <= 1e-17 * sum) break;
+    }
+    return sum;
+}
+
+/* Below this, 1 - vis loses more than about 1e-14 relative. */
+#define LOCAL_GUARD 1e-2
+
+/* Add the S mass of the children cut off at one node; they all
+ * lie in S. vis is the pmf mass of the children not cut off. When
+ * neither side was cut off there is nothing to add. Otherwise the
+ * cut-off mass is 1 - vis, used only above the guard, where the
+ * subtraction is accurate to about 1e-14 relative; below it the
+ * cut-off runs are walked. Each side passes hu = pmf(pu) and the
+ * walk covers pu + 1 onward; incl_u = 1 adds pmf(pu) itself, for
+ * the caller (penult) whose pu is the first cut-off child rather
+ * than the last visited one. */
+static void settle(FisherState *s, double prob_prefix, double vis,
+                   int bu, double hu, int pu, int incl_u, int y_hi,
+                   int bd, double hd, int pd, int incl_d, int y_lo,
+                   int a, int c2, int rk) {
+    if (!bu && !bd) return;
+    double t = 1.0 - vis;
+    if (t > LOCAL_GUARD) {
+        s->pval += prob_prefix * t;
+        return;
+    }
+    double m = 0.0;
+    if (bu) m += (incl_u ? hu : 0.0) +
+                 tail_mass(hu, pu, y_hi, 1, a, c2, rk);
+    if (bd) m += (incl_d ? hd : 0.0) +
+                 tail_mass(hd, pd, y_lo, -1, a, c2, rk);
+    s->pval += prob_prefix * m;
+}
+
 /* Next-to-last level: y at level m-2 fixes the leaf. The tested
  * quantity is prob_prefix times the exact 1-D hypergeometric pmf,
  * unimodal in y, so the walk breaks at the first value at or below
@@ -179,30 +235,39 @@ static void penult(int a, int n_rem, double prob_prefix,
     }
 
     double prob = prob_prefix * hp_mode;
-    if (prob > thresh)
-        s->pval -= prob;
-    else
-        return;              /* peak fails: nothing qualifies */
+    if (prob <= thresh) {
+        s->pval += prob_prefix;  /* peak fails: every leaf in S */
+        return;
+    }
 
     int prev, y_k;
     double hp;
+    double vis = hp_mode;
+    int bu = 0, bd = 0, pu = 0, pd = 0;
+    double hu = 0.0, hd = 0.0;
 
     prev = mode_k; hp = hp_mode;
     for (y_k = mode_k + 1; y_k <= y_hi; y_k++) {
         hp = hp_step_up(hp, prev, a, c2, s->r[k]);
         prev = y_k;
-        prob = prob_prefix * hp;
-        if (prob > thresh) s->pval -= prob;
-        else break;          /* unimodal: all further fail */
+        if (prob_prefix * hp <= thresh) {  /* unimodal: rest in S */
+            bu = 1; hu = hp; pu = y_k;
+            break;
+        }
+        vis += hp;
     }
     prev = mode_k; hp = hp_mode;
     for (y_k = mode_k - 1; y_k >= y_lo; y_k--) {
         hp = hp_step_down(hp, prev, a, c2, s->r[k]);
         prev = y_k;
-        prob = prob_prefix * hp;
-        if (prob > thresh) s->pval -= prob;
-        else break;
+        if (prob_prefix * hp <= thresh) {
+            bd = 1; hd = hp; pd = y_k;
+            break;
+        }
+        vis += hp;
     }
+    settle(s, prob_prefix, vis, bu, hu, pu, 1, y_hi,
+           bd, hd, pd, 1, y_lo, a, c2, s->r[k]);
 }
 
 /* pref_lp + F(y) with F(y) = h_k(y) + maxh[k+1][a - y]; -Inf when
@@ -217,9 +282,9 @@ static double child_max_lp(const FisherState *s, int k, int a,
 static void traverse(int k, int a, double prob_prefix,
                      double pref_lp, int n_rem, FisherState *s);
 
-/* Handle one child: bulk-subtract if its subtree lies entirely in
- * the complement, otherwise descend. The caller has already
- * established that the child is not entirely in the acceptance
+/* Handle one child: drop it if its subtree lies entirely in the
+ * complement, otherwise descend. The caller has already
+ * established that the child is not entirely in the significance
  * region. */
 static void handle_child(int k, int a, int y_k, double hp,
                          double prob_prefix, double pref_lp,
@@ -228,10 +293,8 @@ static void handle_child(int k, int a, int y_k, double hp,
     int new_a = a - y_k;
     double nn = minh_at(s, k + 1, new_a);
     if (isfinite(nn) &&
-        pref_lp + h_term(s, k, y_k) + nn > s->log_thresh) {
-        s->pval -= new_prefix;   /* whole subtree in complement */
-        return;
-    }
+        pref_lp + h_term(s, k, y_k) + nn > s->log_thresh)
+        return;                  /* whole subtree in complement */
     double new_pref_lp = pref_lp + h_term(s, k, y_k);
     if (k == s->m - 3)
         penult(new_a, s->suffix_r[k + 1], new_prefix, s);
@@ -247,8 +310,8 @@ static void traverse(int k, int a, double prob_prefix,
             double hp_last = dhyper_lf(a, a, n_rem - a,
                                        s->r[s->m - 1], s->lfact);
             double prob = prob_prefix * hp_last;
-            if (prob > s->p_obs * (1 + s->tol))
-                s->pval -= prob;
+            if (prob <= s->p_obs * (1 + s->tol))
+                s->pval += prob;
         }
         return;
     }
@@ -274,8 +337,10 @@ static void traverse(int k, int a, double prob_prefix,
             if (dn <= f) break;
             y_pk--; f = dn;
         }
-        if (f <= s->log_thresh)
-            return;   /* peak fails: every child is in S */
+        if (f <= s->log_thresh) {
+            s->pval += prob_prefix;  /* peak fails: all in S */
+            return;
+        }
     }
 
     int c2 = n_rem - a;
@@ -283,26 +348,38 @@ static void traverse(int k, int a, double prob_prefix,
     double hp;
 
     /* Upward from the peak; concavity of F licenses the break. */
-    hp = dhyper_lf(y_pk, a, c2, s->r[k], s->lfact);
+    int bu = 0, bd = 0, pu = 0, pd = 0;
+    double hu = 0.0, hd = 0.0;
+    double hp_pk = dhyper_lf(y_pk, a, c2, s->r[k], s->lfact);
+    double vis = hp_pk;
+    hp = hp_pk;
     handle_child(k, a, y_pk, hp, prob_prefix, pref_lp, s);
     prev = y_pk;
     for (y_k = y_pk + 1; y_k <= y_hi; y_k++) {
-        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh)
+        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh) {
+            bu = 1; hu = hp; pu = prev;
             break;
+        }
         hp = hp_step_up(hp, prev, a, c2, s->r[k]);
         prev = y_k;
+        vis += hp;
         handle_child(k, a, y_k, hp, prob_prefix, pref_lp, s);
     }
     /* Downward from the peak. */
-    hp = dhyper_lf(y_pk, a, c2, s->r[k], s->lfact);
+    hp = hp_pk;
     prev = y_pk;
     for (y_k = y_pk - 1; y_k >= y_lo; y_k--) {
-        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh)
+        if (child_max_lp(s, k, a, pref_lp, y_k) <= s->log_thresh) {
+            bd = 1; hd = hp; pd = prev;
             break;
+        }
         hp = hp_step_down(hp, prev, a, c2, s->r[k]);
         prev = y_k;
+        vis += hp;
         handle_child(k, a, y_k, hp, prob_prefix, pref_lp, s);
     }
+    settle(s, prob_prefix, vis, bu, hu, pu, 0, y_hi,
+           bd, hd, pd, 0, y_lo, a, c2, s->r[k]);
 }
 
 double rx2_tree_memo_c_impl(int *dat, int m) {
@@ -314,7 +391,7 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
     memset(&s, 0, sizeof(s));
     s.m = m;
     s.tol = 3.45254e-7;
-    s.pval = 1.0;
+    s.pval = 0.0;
 
     int r_unsorted[MAX_ROWS];
     int i;
@@ -369,6 +446,7 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
     for (i = m - 1; i >= 0; i--)
         s.suffix_r[i] = s.suffix_r[i + 1] + s.r[i];
 
+
     s.lfact[0] = 0.0;
     for (i = 1; i <= s.n; i++)
         s.lfact[i] = s.lfact[i - 1] + log((double)i);
@@ -396,5 +474,5 @@ double rx2_tree_memo_c_impl(int *dat, int m) {
         traverse(0, s.c[0], 1.0, s.log_const, s.n, &s);
     }
 
-    return s.pval;
+    return s.pval > 1.0 ? 1.0 : s.pval;
 }

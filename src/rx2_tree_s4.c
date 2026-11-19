@@ -253,8 +253,8 @@ static int traverse(int k, int c1, int *y,
                 c1, c1, n_rem - c1,
                 s->r[s->m - 1], s->lfact);
             double prob = prob_prefix * hp_last;
-            if (prob > s->p_obs * (1 + s->tol))
-                s->pval -= prob;
+            if (prob <= s->p_obs * (1 + s->tol))
+                s->pval += prob;
             return S4_NONE;
         }
 
@@ -311,6 +311,7 @@ static int traverse(int k, int c1, int *y,
             if (new_prefix *
                 s->cmax[(k + 1) * s->c0p1 + new_c1] <=
                 s->p_obs * (1 + s->tol)) {
+                s->pval += new_prefix;   /* whole subtree in S */
                 on_mode_path = on_mode_path &&
                                !is_mode_node;
                 y_k += dir; descend = 0;
@@ -323,8 +324,7 @@ static int traverse(int k, int c1, int *y,
             find_min(new_c1, y, k + 1, s);
 
             // S2: find_min bulk subtraction
-            if (s->p_min > s->p_obs * (1 + s->tol)) {
-                s->pval -= new_prefix;
+            if (s->p_min > s->p_obs * (1 + s->tol)) {  /* all in U */
                 on_mode_path = on_mode_path &&
                                !is_mode_node;
                 y_k += dir; descend = 0;
@@ -333,9 +333,30 @@ static int traverse(int k, int c1, int *y,
 
             // S3: find_max exclusion
             if (s->p_max <= s->p_obs * (1 + s->tol)) {
-                // S4: mode-path dominance cascade
-                if (is_mode_node)
+                s->pval += new_prefix;   /* whole subtree in S */
+                // S4: mode-path dominance cascade. The siblings not
+                // yet visited lie in S as well; the visited ones
+                // form a contiguous run through the mode, so the
+                // unvisited ones are the runs beyond y_k and, in
+                // the upward phase, everything below the mode.
+                if (is_mode_node) {
+                    double rest = 0.0;
+                    int j;
+                    if (dir > 0) {
+                        for (j = y_k + 1; j <= y_hi; j++)
+                            rest += dhyper_lf(j, c1, c2, s->r[k],
+                                              s->lfact);
+                        for (j = y_lo; j < mode; j++)
+                            rest += dhyper_lf(j, c1, c2, s->r[k],
+                                              s->lfact);
+                    } else {
+                        for (j = y_lo; j < y_k; j++)
+                            rest += dhyper_lf(j, c1, c2, s->r[k],
+                                              s->lfact);
+                    }
+                    s->pval += prob_prefix * rest;
                     return S4_CASCADE;
+                }
                 on_mode_path = 0;
                 y_k += dir; descend = 0;
                 continue;
@@ -404,7 +425,7 @@ double rx2_tree_s4_c_impl(int *dat, int m) {
     memset(&s, 0, sizeof(s));
     s.m = m;
     s.tol = 3.45254e-7;
-    s.pval = 1.0;
+    s.pval = 0.0;
 
     int r_unsorted[MAX_ROWS];
     int i;

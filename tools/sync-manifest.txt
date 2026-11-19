@@ -37,3 +37,4 @@ inst/tinytest/test_ci.R
 inst/tinytest/test_htest.R
 inst/tinytest/test_power.R
 inst/tinytest/test_power_fast.R
+inst/tinytest/test_small_p.R

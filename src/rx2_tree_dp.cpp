@@ -256,7 +256,7 @@ static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
     if (k == s.m - 1) {
         y[s.m - 1] = c1;
         double prob = compute_prob(y, s);
-        if (prob > s.p_obs * (1 + s.tol)) s.pval -= prob;
+        if (prob <= s.p_obs * (1 + s.tol)) s.pval += prob;
         return;
     }
 
@@ -282,6 +282,7 @@ static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
         // Constrained suffix_max pruning
         double smax = s.cmax[(k + 1) * s.c0p1 + new_c1];
         if (new_prefix * smax <= threshold) {
+            s.pval += new_prefix;   // whole subtree in S
             traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
@@ -291,12 +292,12 @@ static void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
         s.p_min = 1;
         find_min(new_c1, y, k + 1, s);
 
-        if (s.p_min > threshold) {
-            s.pval -= new_prefix;
+        if (s.p_min > threshold) {   // whole subtree in U
             traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
         if (s.p_max <= threshold) {
+            s.pval += new_prefix;   // whole subtree in S
             traverse(k, c1, y, prob_prefix, n_rem, false, y_k + dir, dir, mode, s);
             return;
         }
@@ -369,7 +370,7 @@ double rx2_tree_dp_cpp(IntegerMatrix dat) {
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 
     s.tol = 3.45254e-7;
-    s.pval = 1.0;
+    s.pval = 0.0;
     s.n = 0;
     s.c[0] = s.c[1] = 0;
 

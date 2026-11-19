@@ -332,7 +332,7 @@ void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
         y[s.m - 1] = c1;
         double hp = dhyper_lf(c1, c1, n_rem - c1, s.r[s.m - 1], s.lfact);
         double prob = prob_prefix * hp;
-        if (prob > s.p_obs * (1 + s.tol)) s.pval -= prob;
+        if (prob <= s.p_obs * (1 + s.tol)) s.pval += prob;
         return;
     }
 
@@ -354,6 +354,7 @@ void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
 
     if (s.m - k > 2) {
         if (new_prefix * s.suffix_max[k + 1] <= s.p_obs * (1 + s.tol)) {
+            s.pval += new_prefix;   // whole subtree in S
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_suffix++;
 #endif
@@ -366,8 +367,7 @@ void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
         s.p_min = 1;
         find_min(new_c1, y, k + 1, s);
 
-        if (s.p_min > s.p_obs * (1 + s.tol)) {
-            s.pval -= new_prefix;
+        if (s.p_min > s.p_obs * (1 + s.tol)) {   // all in U
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_min++;
 #endif
@@ -375,6 +375,7 @@ void traverse(int k, int c1, int* y, double prob_prefix, int n_rem,
             return;
         }
         if (s.p_max <= s.p_obs * (1 + s.tol)) {
+            s.pval += new_prefix;   // whole subtree in S
 #ifdef PROFILE_V4
             if (g_prof) g_prof->nodes_pruned_max++;
 #endif
@@ -396,7 +397,7 @@ double rx2_tree_memo_cpp(IntegerMatrix dat) {
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 
     s.tol = 3.45254e-7;
-    s.pval = 1.0;
+    s.pval = 0.0;
     s.n = 0;
     s.c[0] = s.c[1] = 0;
 
@@ -483,7 +484,7 @@ Rcpp::List rx2_tree_memo_profile(IntegerMatrix dat) {
     if (s.m > MAX_ROWS) Rcpp::stop("Too many rows (max %d)", MAX_ROWS);
 
     s.tol = 3.45254e-7;
-    s.pval = 1.0;
+    s.pval = 0.0;
     s.n = 0;
     s.c[0] = s.c[1] = 0;
 

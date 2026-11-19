@@ -13,17 +13,22 @@
 //     by q classify into three contiguous runs by the monotone
 //     tests of Proposition 6D, using the exact suffix extrema
 //     maxh/minh of the c = 2 separability DP.
-//   - A class entirely in the complement region U contributes
+//   - A class entirely in the significance region S contributes
 //     (class weight) x (total suffix mass) in O(1), the suffix
 //     mass being closed-form by Vandermonde. A class entirely in
-//     the significance region S is dropped. Only straddling
+//     the complement region U is dropped. Only straddling
 //     classes propagate, per state, not per path.
 //   - At the last two rows, Proposition 6I: leaf masses and their
-//     prefix sums are computed once per state; each class's
-//     qualifying completions form an interval, nested across
-//     classes sorted by q, extracted by expanding two pointers;
-//     each class's whole contribution is one prefix-sum
-//     difference.
+//     prefix and suffix sums are computed once per state; each
+//     class's complement completions form an interval, nested
+//     across classes sorted by q, extracted by expanding two
+//     pointers; each class's significance mass is the two tails
+//     outside that interval, one prefix sum plus one suffix sum.
+//
+// The p-value is accumulated directly as the mass of S, a sum of
+// non-negative terms. The earlier form p = 1 - mass(U) cancels
+// catastrophically once p falls below about 1e-13 and returned 0
+// or values of order 1e-14 for p-values as small as 1e-38.
 //
 // The class-merge epsilon is 1e-12 on the log scale: it merges
 // paths whose prefix products are equal up to floating-point noise
@@ -62,7 +67,7 @@ struct SweepState {
   std::vector<int> suffix_r;   // suffix_r[k] = sum_{i >= k} r[i]
   std::vector<double> slf;     // slf[k] = sum_{i >= k} lfact[r[i]]
   int acap;                    // c1 + 1
-  double acc;                  // accumulated mass of U (linear)
+  double acc;                  // accumulated mass of S (linear)
 };
 
 inline double h_term(const SweepState& s, int k, int y) {
@@ -145,27 +150,27 @@ void sort_merge(std::vector<ClassEntry>& cl, double eps) {
 // q-comparisons: a child straddles iff
 //   thr_lo[b'] < q' <= thr_hi[b'],
 // where thr_hi[b'] = t - log D - maxh[k+1][b'] (at or below it,
-// the subtree lies in the significance region) and
-// thr_lo[b'] = t - log D - minh[k+1][b'] (above it, the subtree
-// lies in the complement region and is bulk-subtracted).
+// the subtree lies in the significance region and its whole mass
+// is added) and thr_lo[b'] = t - log D - minh[k+1][b'] (above it,
+// the subtree lies in the complement region and is dropped).
 void run_sweep(SweepState& s, double eps_merge) {
   const int c1 = s.c1;
   const int acap = s.acap;
   std::vector<std::vector<ClassEntry>> cur(c1 + 1), nxt(c1 + 1);
   std::vector<double> thr_hi(acap), thr_lo(acap), bulk_lm(acap);
   std::vector<double> hk;      // h_k(y), tabulated once per stage
-  std::vector<double> flog, F;
+  std::vector<double> flog, F, G;
 
   // Root classification (the only class not born from a push).
   {
     const double mx = s.maxh[c1];
-    if (!std::isfinite(mx) ||
-        s.log_const + mx <= s.log_thresh) return;
-    if (s.log_const + s.minh[c1] > s.log_thresh) {
+    if (!std::isfinite(mx)) return;
+    if (s.log_const + mx <= s.log_thresh) {
       s.acc += std::exp(s.log_const
                  + lchoose_lf(s, s.suffix_r[0], c1) - s.slf[0]);
       return;
     }
+    if (s.log_const + s.minh[c1] > s.log_thresh) return;
     cur[0].push_back({0.0, 1.0});
   }
 
@@ -208,11 +213,11 @@ void run_sweep(SweepState& s, double eps_merge) {
           for (int y = y_lo; y <= y_hi; y++) {
             const double q = e.q + hk[y];
             const int bc = b - y;
-            if (q <= thr_hi[bc]) continue;          // drop
-            if (q > thr_lo[bc]) {                   // bulk
+            if (q <= thr_hi[bc]) {                  // all in S
               s.acc += e.w * std::exp(q + bulk_lm[bc]);
               continue;
             }
+            if (q > thr_lo[bc]) continue;           // all in U
             nxt[a + y].push_back({q, e.w});
             any_next = true;
           }
@@ -221,34 +226,51 @@ void run_sweep(SweepState& s, double eps_merge) {
         continue;
       }
 
-      // Two rows remain: Proposition 6I. Leaf masses and prefix
-      // sums once per state; nested intervals by expanding two
-      // pointers over classes sorted ascending in q.
+      // Two rows remain: Proposition 6I. Leaf masses with prefix
+      // sums F and suffix sums G once per state; nested complement
+      // intervals by expanding two pointers over classes sorted
+      // ascending in q. The significance mass of a class is the
+      // two tails F[lo] + G[hi + 1], each a sum of non-negative
+      // terms, never a difference of sums.
       const int y_lo_st = std::max(0, b - s.r[k + 1]);
       const int y_hi_st = std::min(s.r[k], b);
       const int L = y_hi_st - y_lo_st + 1;   // leaf window width
       flog.resize(L);
       F.resize(L + 1);
-      F[0] = 0.0;
-      for (int y = y_lo_st; y <= y_hi_st; y++) {
-        const double fl = h_term(s, k, y) + h_term(s, k + 1, b - y);
-        flog[y - y_lo_st] = fl;
-        F[y - y_lo_st + 1] = F[y - y_lo_st] + std::exp(fl);
-      }
+      G.resize(L + 1);
+      // Leaf masses are stored relative to the largest, fmax, and
+      // fmax is folded back into the exponent of each class's
+      // factor. Unscaled, exp(base) overflows and the leaf masses
+      // underflow once a row margin is a few hundred, and their
+      // product is inf * 0 = NaN (a 3 x 2 table with a row margin
+      // of 248 did exactly this).
+      for (int y = y_lo_st; y <= y_hi_st; y++)
+        flog[y - y_lo_st] = h_term(s, k, y) + h_term(s, k + 1, b - y);
       const int ym = (int)(std::max_element(flog.begin(),
                            flog.end()) - flog.begin());
+      const double fmax = flog[ym];
+      F[0] = 0.0;
+      for (int j = 0; j < L; j++) {
+        const double fe = std::exp(flog[j] - fmax);
+        G[j] = fe;
+        F[j + 1] = F[j] + fe;
+      }
+      G[L] = 0.0;
+      for (int j = L - 1; j >= 0; j--) G[j] += G[j + 1];
       int cur_lo = ym + 1, cur_hi = ym;   // empty
       for (const ClassEntry& e : cl) {
         const double base = s.log_const + e.q;
         const double c = s.log_thresh - base;
+        const double scale = e.w * std::exp(base + fmax);
         if (cur_hi < cur_lo) {
           if (flog[ym] > c) { cur_lo = ym; cur_hi = ym; }
         }
         if (cur_hi >= cur_lo) {
           while (cur_lo > 0 && flog[cur_lo - 1] > c) cur_lo--;
           while (cur_hi < L - 1 && flog[cur_hi + 1] > c) cur_hi++;
-          s.acc += e.w * std::exp(base)
-                 * (F[cur_hi + 1] - F[cur_lo]);
+          s.acc += scale * (F[cur_lo] + G[cur_hi + 1]);
+        } else {
+          s.acc += scale * F[L];
         }
       }
       cl.clear();
@@ -329,8 +351,7 @@ double rx2_net_sweep_cpp(IntegerMatrix dat,
   s.acc = 0.0;
   run_sweep(s, eps_merge);
 
-  double pval = 1.0 - s.acc;
-  if (pval < 0.0) pval = 0.0;
+  double pval = s.acc;
   if (pval > 1.0) pval = 1.0;
   return pval;
 }

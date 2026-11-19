@@ -15,9 +15,11 @@
 //   - When the path completes, fill the last column (cells (i,c-1) =
 //     remaining row residual) and last row (cells (m-1,j) = remaining
 //     column residual). This determines the table.
-//   - Test statistic T(Y) = 1/Pr(Y); start antipvalue at 1 and subtract
-//     Pr(Y) for tables strictly more probable than observed
-//     (Pr(Y) > Pr_obs * (1 + tol)). Result is the two-sided p-value.
+//   - Test statistic T(Y) = 1/Pr(Y). The p-value is accumulated
+//     directly as the mass of S = {Pr(Y) <= Pr_obs * (1 + tol)}, a
+//     sum of non-negative terms. (The earlier form, 1 minus the
+//     mass of the more probable tables, cancelled catastrophically
+//     for p below about 1e-13.)
 //
 // Tolerance constant matches the rx2 family: 3.45254e-7 (R fisher.test).
 //
@@ -53,7 +55,7 @@ struct RxcState {
   double log_const;                  // log(prod r_i! prod c_j! / n!)
   double p_obs;
   double log_thresh;                 // log(p_obs * (1 + tol))
-  double pval;                       // antipvalue, starts at 1
+  double pval;                       // accumulated mass of S
   std::vector<double> lf;            // lf[v] = log(v!)
   // Per-depth caps scratch. One buffer per path position: a single
   // shared buffer would be clobbered by the recursive calls made
@@ -239,7 +241,7 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp,
     for (int jj = 0; jj < cm1; ++jj)
       det += s.lf[s.y[yidx(s, mm1, jj)]];
     const double p = std::exp(s.log_const + placed_lp - det);
-    if (p - s.p_obs > s.p_obs * RXC_TOL) s.pval -= p;
+    if (!(p - s.p_obs > s.p_obs * RXC_TOL)) s.pval += p;
     return;
   }
   // Path step t (1-indexed) -> cell (i, j) zero-indexed.
@@ -296,6 +298,7 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp,
     // SKIP, free certificate: even the prefix mass cannot clear
     // the threshold, so no completion can.
     if (lm_child <= s.log_thresh) {
+      s.pval += std::exp(lm_child);
       ++s.n_skipped;
       continue;
     }
@@ -304,8 +307,17 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp,
     const double bnd = node_const - s.lf[x] +
       water_fill_lp(s, s.cresid[j] - x, caps, q_cur);
     if (bnd <= s.log_thresh) {
+      s.pval += std::exp(lm_child);
       ++s.n_skipped;
-      if (seen_live) break;   // concavity: past the live interval
+      if (seen_live) {
+        // Concavity: every later child lies in S too. Their
+        // masses are closed-form, so no bound is evaluated.
+        for (int x2 = x + 1; x2 <= x_up; ++x2)
+          s.pval += std::exp(lm_base + lch(s, s.cresid[j], x2) +
+                             lch(s, rem_pop - s.cresid[j],
+                                 s.rresid[i] - x2));
+        break;
+      }
       continue;
     }
     seen_live = true;
@@ -314,8 +326,7 @@ void traverse(int t, int tmax, RxcState& s, double placed_lp,
     // is the prefix mass.
     const double min_bnd = node_min_const - s.lf[x] -
       concentration_lp(s, s.cresid[j] - x, caps, q_cur);
-    if (min_bnd > s.log_thresh) {
-      s.pval -= std::exp(lm_child);
+    if (min_bnd > s.log_thresh) {   // whole subtree in U
       ++s.n_bulk;
       continue;
     }
@@ -371,7 +382,7 @@ double rxc_tree_memo_cpp(IntegerMatrix dat) {
 
   s.rresid = s.rmarg;
   s.cresid = s.cmarg;
-  s.pval = 1.0;
+  s.pval = 0.0;
   s.n_skipped = 0;
   s.log_thresh = std::log(s.p_obs) + std::log1p(RXC_TOL);
 
@@ -393,9 +404,7 @@ double rxc_tree_memo_cpp(IntegerMatrix dat) {
 
   traverse(1, tmax, s, 0.0, 0.0, s.n, 0.0);
 
-  // Numeric guard: pval should be in (0, 1]. Clamp to handle round-off
-  // around the boundary cases.
-  if (s.pval < 0.0) s.pval = 0.0;
+  // Round-off can carry a sum of masses slightly past 1.
   if (s.pval > 1.0) s.pval = 1.0;
   return s.pval;
 }

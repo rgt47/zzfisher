@@ -16,7 +16,10 @@
 # optimizations like fixed arrays and inline functions).
 
 .rx2_tree_dp <- function(dat) {
-  pval <- 1
+  # p is accumulated directly as the mass of the significance region
+  # (a sum of non-negative terms); 1 minus the complement mass
+  # cancels catastrophically for p below about 1e-13.
+  pval <- 0
   tol <- 3.45254e-7
   m <- nrow(dat)
   r_orig <- rowSums(dat)
@@ -223,8 +226,8 @@
     if (k == m) {
       y[m] <- c1
       prob <- compute_prob(y)
-      if (prob > p_obs * (1 + tol))
-        pval <<- pval - prob
+      if (prob <= p_obs * (1 + tol))
+        pval <<- pval + prob
       return()
     }
 
@@ -256,6 +259,7 @@
       # (3) Constrained suffix_max pruning
       smax <- cmax_mat[k + 1, new_c1 + 1]
       if (new_prefix * smax <= p_obs * (1 + tol)) {
+        pval <<- pval + new_prefix
         step_horizontal()
         return()
       }
@@ -266,12 +270,12 @@
       find_min(new_c1, y, k)
 
       if (p_min > p_obs * (1 + tol)) {
-        pval <<- pval - new_prefix
         step_horizontal()
         return()
       }
 
       if (p_max <= p_obs * (1 + tol)) {
+        pval <<- pval + new_prefix
         step_horizontal()
         return()
       }
@@ -286,5 +290,5 @@
   find_max(1, cc[1], n, y_obs)
   traverse(1, cc[1], y_obs, 1, n, TRUE, 0, +1, 0)
 
-  pval
+  min(1, pval)
 }

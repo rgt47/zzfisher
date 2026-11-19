@@ -18,14 +18,16 @@
 //      simple sums of the per-stratum minima and maxima.
 //   3. Sweep the strata, convolving class lists with three-case
 //      classification against the exact suffix extrema: a class
-//      certified inside the complement region U = {P > P_obs
+//      certified inside the significance region S = {P <= P_obs
 //      (1+tol)} contributes its own mass in O(1), because the
 //      remaining strata's conditional masses sum to one (the
 //      product-form Pagano-Halvorsen identity); a class
-//      certified in the significance region is dropped; only
+//      certified in the complement region is dropped; only
 //      straddling classes convolve forward.
-//   4. p = 1 - mass(U), the minimum-likelihood two-sided value
-//      with the FEXACT tolerance convention.
+//   4. p = mass(S), the minimum-likelihood two-sided value with
+//      the FEXACT tolerance convention, accumulated directly as a
+//      sum of non-negative terms. (The earlier form 1 - mass(U)
+//      cancelled catastrophically for p below about 1e-13.)
 // This is the stage-wise full-distribution discipline of
 // Mehta-Patel-Gray (1985) fused with the classification devices
 // of the two-way kernels. With k = 1 the test reduces to the
@@ -193,16 +195,16 @@ double rxck_net_ci_cpp(IntegerVector dat) {
   const size_t MAX_CLASSES = 5000000;
   CiMap cur, nxt;
   ci_add(cur, 0.0, 1.0);
-  double mass_U = 0.0;
+  double mass_S = 0.0;
   for (int l = 0; l < k && !cur.empty(); ++l) {
     nxt.clear();
     for (const auto& kv : cur) {
       const CiCls& e = kv.second;
-      if (e.q + sufmax[l] <= log_thresh) continue;   // all in S
-      if (e.q + sufmin[l] > log_thresh) {            // all in U
-        mass_U += e.w;   // remaining strata's masses sum to one
+      if (e.q + sufmax[l] <= log_thresh) {           // all in S
+        mass_S += e.w;   // remaining strata's masses sum to one
         continue;
       }
+      if (e.q + sufmin[l] > log_thresh) continue;    // all in U
       for (const CiCls& f : strat[l])
         ci_add(nxt, e.q + f.q, e.w * f.w);
     }
@@ -212,10 +214,9 @@ double rxck_net_ci_cpp(IntegerVector dat) {
   }
   // Classes surviving all strata are complete tables.
   for (const auto& kv : cur)
-    if (kv.second.q > log_thresh) mass_U += kv.second.w;
+    if (kv.second.q <= log_thresh) mass_S += kv.second.w;
 
-  double pval = 1.0 - mass_U;
-  if (pval < 0.0) pval = 0.0;
+  double pval = mass_S;
   if (pval > 1.0) pval = 1.0;
   return pval;
 }

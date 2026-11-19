@@ -35,6 +35,11 @@
 // Both sums are accumulated by enumeration; the normalization constant
 // of the conditional distribution is not closed form for general 3-way
 // tables, so this ratio approach avoids needing it explicitly.
+// Both sums are carried relative to the smallest T seen so far, and
+// rescaled when a smaller one appears, so every weight is at most 1
+// and the sums cannot underflow. (Unscaled exp(-T) underflowed to
+// zero for moderate n, e.g. a 2 x 2 x 2 table with n = 306, and the
+// kernel then reported that no feasible table existed.)
 //
 // Scope notes:
 //   - Because the p-value is a ratio of two sums over the full
@@ -82,8 +87,10 @@ struct State {
   std::vector<int> y;
 
   double T_obs;        // sum log(y_obs!)
-  double mass_total;   // accumulated sum exp(-T)
-  double mass_extreme; // accumulated sum exp(-T) over { Y : T >= T_obs }
+  double T_ref;        // smallest T seen so far; weights are
+                       // exp(T_ref - T) <= 1
+  double mass_total;   // accumulated sum exp(T_ref - T)
+  double mass_extreme; // the same sum over { Y : T >= T_obs }
   std::vector<double> lf;  // lf[v] = log(v!)
   // Per-layer close scratch (a layer is closed at most once per
   // active path, so per-layer buffers cannot alias; heap churn per
@@ -193,7 +200,13 @@ void leaf(State& s, double t_pref) {
   for (int i = 0; i < s.m; ++i)
     for (int j = 0; j < s.c; ++j)
       T += s.lf[s.ab_resid[abidx(s, i, j)]];
-  const double w = std::exp(-T);
+  if (T < s.T_ref) {
+    const double f = std::exp(T - s.T_ref);
+    s.mass_total *= f;
+    s.mass_extreme *= f;
+    s.T_ref = T;
+  }
+  const double w = std::exp(s.T_ref - T);
   s.mass_total += w;
   if (T - s.T_obs >= -RXCK_TOL) s.mass_extreme += w;
 }
@@ -317,6 +330,7 @@ double rxck_tree_memo_cpp(IntegerVector dat) {
   s.bc_resid = s.bc;
   s.mass_total = 0.0;
   s.mass_extreme = 0.0;
+  s.T_ref = s.T_obs;
 
   const int tmax = (s.m - 1) * (s.c - 1) * (s.k - 1);
   rxck::traverse(1, tmax, s, 0.0);

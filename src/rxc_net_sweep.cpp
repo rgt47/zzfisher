@@ -70,9 +70,11 @@
 //   drop / bulk / propagate            the per-arc run
 //     ("The sweep")                    classification in the
 //                                      forward sweep
-//   the ledger p = 1 - mass(U)         s.pval, decremented by
-//     (Section "The Convex             every bulk disposal
-//     Complement Region")
+//   the ledger p = mass(S)             s.pval, incremented by
+//     (Section "The Convex             every drop (the slice
+//     Complement Region")              wholly in S); bulk-
+//                                      disposed U slices are
+//                                      discarded
 
 #include <Rcpp.h>
 #include <vector>
@@ -525,13 +527,13 @@ double rxc_net_sweep_cpp(IntegerMatrix dat_in) {
   // The three-way classification of the paper, per class-arc
   // pair: a child whose completions all satisfy
   // P <= P_obs(1 + tau) lies wholly in the significance region
-  // and is DROPPED, contributing nothing to mass(U); a child
-  // whose completions all exceed the threshold lies wholly in U
-  // and is BULK-disposed, its entire mass moved to the ledger in
-  // one step via the stage-level identity; only children that
-  // straddle PROPAGATE to the next stage. The ledger is
-  // s.pval = 1 - mass(U), so each bulk disposal is a
-  // subtraction from pval.
+  // and is DROPPED, its entire mass moved to the ledger in one
+  // step via the stage-level identity; a child whose completions
+  // all exceed the threshold lies wholly in U and is discarded;
+  // only children that straddle PROPAGATE to the next stage. The
+  // ledger is s.pval = mass(S), a sum of non-negative terms. (The
+  // earlier ledger 1 - mass(U) cancelled catastrophically for p
+  // below about 1e-13.)
   //
   // Loop order is arcs-outside-classes. Arcs are a property of the
   // state, not of the class, so enumerating them inside the class
@@ -573,7 +575,7 @@ double rxc_net_sweep_cpp(IntegerMatrix dat_in) {
   cur_pool[0].reset();
   cur_pool[0].add(0.0, 1.0);
   cur_idx.emplace(kc.encode(s.cm), 0);
-  s.pval = 1.0;
+  s.pval = 0.0;
 
   std::vector<double> tsum;       // class suffix sums, per state
   std::vector<long long> arc_child;  // arc child keys (non-CSR)
@@ -593,15 +595,15 @@ double rxc_net_sweep_cpp(IntegerMatrix dat_in) {
       std::sort(cv.begin(), cv.end(),
                 [](const Cls& a, const Cls& b) { return a.q < b.q; });
 
-      // Suffix sums anchored at the largest q, so every term is
-      // exp() of a non-positive argument and an arc's bulk slice
-      // [hi, K) is read off as one entry: always a sum, never a
-      // difference of two large sums.
+      // Prefix sums anchored at the largest q, so every term is
+      // exp() of a non-positive argument and an arc's dropped
+      // slice [0, lo) is read off as one entry: always a sum,
+      // never a difference of two large sums.
       const double qref = cv[K - 1].q;
       tsum.resize(K + 1);
-      tsum[K] = 0.0;
-      for (int t = K - 1; t >= 0; --t)
-        tsum[t] = tsum[t + 1] + cv[t].w * std::exp(cv[t].q - qref);
+      tsum[0] = 0.0;
+      for (int t = 0; t < K; ++t)
+        tsum[t + 1] = tsum[t] + cv[t].w * std::exp(cv[t].q - qref);
 
       // Arcs of this state, enumerated once. Above the CSR
       // threshold, read the prebuilt run in place; below it,
@@ -649,14 +651,15 @@ double rxc_net_sweep_cpp(IntegerMatrix dat_in) {
         const int hi = (int)(std::upper_bound(
             cv.begin() + lo, cv.end(), base - nxt_min[ck], q_gt)
             - cv.begin());
-        if (hi < K)
-          // Bulk slice: classes cv[hi..K) lie wholly inside U
+        if (lo > 0)
+          // Dropped slice: classes cv[0..lo) lie wholly inside S
           // through this arc, so their entire mass moves to the
           // ledger at once; nxt_lmult[ck] is the child's total
-          // completion weight (eq. 2.4) and tsum[hi] the classes'
-          // summed weight, one exp() for the whole run.
-          s.pval -= std::exp(s.log_D + step + nxt_lmult[ck] + qref) *
-                    tsum[hi];
+          // completion weight (eq. 2.4) and tsum[lo] the classes'
+          // summed weight, one exp() for the whole run. The slice
+          // cv[hi..K) lies wholly in U and is discarded.
+          s.pval += std::exp(s.log_D + step + nxt_lmult[ck] + qref) *
+                    tsum[lo];
         if (lo < hi) {
           auto r = nxt_idx.emplace(ck, nxt_used);
           if (r.second) {
@@ -677,7 +680,6 @@ double rxc_net_sweep_cpp(IntegerMatrix dat_in) {
     nxt_used = 0;
   }
 
-  if (s.pval < 0.0) s.pval = 0.0;
   if (s.pval > 1.0) s.pval = 1.0;
   return s.pval;
 }

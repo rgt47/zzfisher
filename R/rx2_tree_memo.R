@@ -16,7 +16,10 @@
 # lfact[i] = lgamma(i) = log((i-1)!), so lfact[x+1] = log(x!).
 
 .rx2_tree_memo <- function(dat) {
-  pval <- 1
+  # p is accumulated directly as the mass of the significance region
+  # (a sum of non-negative terms); 1 minus the complement mass
+  # cancels catastrophically for p below about 1e-13.
+  pval <- 0
   tol <- 3.45254e-7
   m <- nrow(dat)
   r_orig <- rowSums(dat)
@@ -200,7 +203,7 @@
 
     hp_mode <- dhyper_lfact(mode_k, c1, c2, r[k])
     prob <- prob_prefix * hp_mode
-    if (prob > thresh) pval <<- pval - prob
+    if (prob <= thresh) pval <<- pval + prob
 
     # Forward from mode
     prev_yk <- mode_k
@@ -213,7 +216,7 @@
             (c2 - r[k] + prev_yk + 1))
         prev_yk <- y_k
         prob <- prob_prefix * hp
-        if (prob > thresh) pval <<- pval - prob
+        if (prob <= thresh) pval <<- pval + prob
       }
     }
 
@@ -228,7 +231,7 @@
             (r[k] - prev_yk + 1))
         prev_yk <- y_k
         prob <- prob_prefix * hp
-        if (prob > thresh) pval <<- pval - prob
+        if (prob <= thresh) pval <<- pval + prob
       }
     }
   }
@@ -242,8 +245,8 @@
         hp_last <- dhyper_lfact(
           c1, c1, n_rem - c1, r[m])
         prob <- prob_prefix * hp_last
-        if (prob > p_obs * (1 + tol))
-          pval <<- pval - prob
+        if (prob <= p_obs * (1 + tol))
+          pval <<- pval + prob
       }
       return()
     }
@@ -260,8 +263,8 @@
           hp_last <- dhyper_lfact(
             c1, c1, n_rem - c1, r[m])
           prob <- prob_prefix * hp_last
-          if (prob > p_obs * (1 + tol))
-            pval <<- pval - prob
+          if (prob <= p_obs * (1 + tol))
+            pval <<- pval + prob
         }
         return()
       }
@@ -311,6 +314,7 @@
         p_max <<- 0
         find_max(k + 1, new_c1, y)
         if (p_max <= p_obs * (1 + tol)) {
+          pval <<- pval + new_prefix
           y_k <- y_k + dir
           descend <- FALSE
           next
@@ -318,7 +322,6 @@
         p_min <<- 1
         find_min(new_c1, y, k + 1)
         if (p_min > p_obs * (1 + tol)) {
-          pval <<- pval - new_prefix
           y_k <- y_k + dir
           descend <- FALSE
           next
@@ -339,5 +342,5 @@
 
   find_max(1, cc[1], y_obs)
   traverse(1, cc[1], y_obs, 1, n, TRUE, 0L, 1L, 0L)
-  pval
+  min(1, pval)
 }
