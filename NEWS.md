@@ -1,3 +1,37 @@
+# zzfisher 0.9.3
+
+## Correctness fixes
+
+* **Small p-values were wrong in most kernels.** Ten kernels computed
+  the p-value as one minus the probability of the tables more probable
+  than the observed one. In double precision that subtraction loses
+  every significant digit once p falls below about 1e-13, and the
+  kernels returned 0, a negative number, or rounding noise. One
+  ordinary random table gave 9.4e-11 against a true 8.4e-16. The
+  affected kernels were the m x 2 sweep and every m x 2 tree (C, C++
+  and pure R), both r x c kernels, and the stratified r x c x k
+  kernel behind `net_ci_cpp()`. They now sum the significance region
+  directly, a sum of non-negative terms. Threshold comparisons are
+  unchanged, so the tolerance convention is unchanged. The m x 2 arms
+  of `net_dp_cpp()` and `net_vander_cpp()` already summed directly and
+  are unchanged.
+
+* **The r x c x k tree reported 'no feasible tables' on large
+  arrays.** Its weights `exp(-T)` were unscaled and underflowed to
+  zero once every table had T above about 745, as on a 2 x 2 x 2 array
+  with n = 306. The weights are now carried relative to the smallest T
+  seen.
+
+* **`net_sweep_cpp()` returned `NaN` on row margins of a few
+  hundred**, from `Inf * 0` in the last-two-rows step. Leaf masses are
+  now scaled by their maximum.
+
+* New test file `inst/tinytest/test_small_p.R` checks every kernel on
+  relative error against log-space complete enumeration, down to
+  p = 4.6e-38 (134 checks; the previous code failed 50 of 110).
+
+The cost is about 1 percent in run time for the sweep and the C tree.
+
 # zzfisher 0.9.2
 
 ## Correctness fixes
